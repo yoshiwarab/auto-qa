@@ -1,7 +1,9 @@
 export {
+  AUTOMATIC_PHASES,
   ChangeInspectionError,
+  InvalidTransitionError,
   RunId,
-  createWorkflowEngine,
+  TRANSITIONS,
   type Change,
   type ChangeInspector,
   type DispatchResult,
@@ -13,7 +15,11 @@ export {
   type WorkflowError,
 } from "./workflowEngine.js";
 
+export { createWorkflowEngine } from "./nodeWorkflowEngine.js";
+
 export {
+  ActiveRunExistsError,
+  RunBusyError,
   RunNotFoundError,
   WorkflowStoreError,
-} from "./sqliteRunStore.js";
+} from "./runStore.js";

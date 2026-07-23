@@ -1,38 +1,53 @@
 import { DatabaseSync } from "node:sqlite";
-import { Data, Effect, Scope } from "effect";
-import type {
-  GeneratePlanJob,
+import { Effect, Scope } from "effect";
+import {
+  ActiveRunExistsError,
+  RunBusyError,
+  RunNotFoundError,
+  type RunRecord,
+  type RunStore,
+  type TurnLease,
+  type TurnOwner,
+  WorkflowStoreError,
+} from "./runStore.js";
+import {
   RunId,
-  RunStatus,
+  type GeneratePlanJob,
+  type RunPhase,
+  type RunStatus,
 } from "./workflowEngine.js";
-
-export class WorkflowStoreError extends Data.TaggedError(
-  "WorkflowStoreError",
-)<{
-  readonly operation: string;
-  readonly cause: unknown;
-}> {}
-
-export class RunNotFoundError extends Data.TaggedError("RunNotFoundError")<{
-  readonly runId: string;
-}> {}
 
 type JobRow = {
   readonly job_json: string;
 };
 
-type StatusRow = {
+type RunRow = {
   readonly run_id: string;
   readonly phase: string;
+  readonly base_url: string;
+};
+
+type TurnLockRow = {
+  readonly run_id: string;
 };
 
 const asJobRow = (value: unknown): JobRow | undefined =>
   value as JobRow | undefined;
 
-const asStatusRow = (value: unknown): StatusRow | undefined =>
-  value as StatusRow | undefined;
+const asRunRow = (value: unknown): RunRow | undefined =>
+  value as RunRow | undefined;
 
-export class SqliteRunStore {
+const asTurnLockRow = (value: unknown): TurnLockRow | undefined =>
+  value as TurnLockRow | undefined;
+
+const decodePhase = (phase: string): RunPhase => {
+  if (phase === "inspectingChanges" || phase === "awaitingAgent") {
+    return phase;
+  }
+  throw new Error(`Unsupported persisted Run phase: ${phase}`);
+};
+
+export class SqliteRunStore implements RunStore {
   constructor(private readonly database: DatabaseSync) {
     this.database.exec(`
       PRAGMA journal_mode = WAL;
@@ -48,13 +63,22 @@ export class SqliteRunStore {
         operation_id TEXT PRIMARY KEY,
         run_id TEXT NOT NULL REFERENCES runs(run_id),
         kind TEXT NOT NULL,
-        status TEXT NOT NULL
+        status TEXT NOT NULL,
+        recovery_policy TEXT NOT NULL
       ) STRICT;
 
       CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY,
         run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id),
         job_json TEXT NOT NULL
+      ) STRICT;
+
+      CREATE TABLE IF NOT EXISTS turn_lock (
+        lock_id INTEGER PRIMARY KEY CHECK (lock_id = 1),
+        run_id TEXT NOT NULL,
+        process_id INTEGER NOT NULL,
+        process_started_at TEXT NOT NULL,
+        ownership_token TEXT NOT NULL UNIQUE
       ) STRICT;
     `);
   }
@@ -63,26 +87,129 @@ export class SqliteRunStore {
     this.database.close();
   }
 
-  beginStart(
+  acquireTurn(
+    runId: RunId,
+    owner: TurnOwner,
+  ): Effect.Effect<
+    TurnLease,
+    RunBusyError | WorkflowStoreError
+  > {
+    return Effect.gen(this, function* () {
+      const result = yield* this.tryStore("acquire Turn", () =>
+        this.database
+          .prepare(
+            "INSERT OR IGNORE INTO turn_lock (lock_id, run_id, process_id, process_started_at, ownership_token) VALUES (1, ?, ?, ?, ?)",
+          )
+          .run(
+            runId,
+            owner.processId,
+            owner.processStartedAt,
+            owner.ownershipToken,
+          ),
+      );
+      if (Number(result.changes) === 0) {
+        const current = yield* this.tryStore(
+          "read Turn owner",
+          () =>
+            asTurnLockRow(
+              this.database
+                .prepare(
+                  "SELECT run_id FROM turn_lock WHERE lock_id = 1",
+                )
+                .get(),
+            ),
+        );
+        return yield* Effect.fail(
+          new RunBusyError({
+            owningRunId: current?.run_id ?? "unknown",
+          }),
+        );
+      }
+
+      return {
+        ownershipToken: owner.ownershipToken,
+      };
+    });
+  }
+
+  releaseTurn(
+    lease: TurnLease,
+  ): Effect.Effect<void, WorkflowStoreError> {
+    return Effect.asVoid(
+      this.tryStore("release Turn", () =>
+        this.database
+          .prepare(
+            "DELETE FROM turn_lock WHERE lock_id = 1 AND ownership_token = ?",
+          )
+          .run(lease.ownershipToken),
+      ),
+    );
+  }
+
+  loadRun(
+    runId: RunId,
+  ): Effect.Effect<RunRecord | null, WorkflowStoreError> {
+    return this.tryStore("load Run", () => {
+      const row = asRunRow(
+        this.database
+          .prepare(
+            "SELECT run_id, phase, base_url FROM runs WHERE run_id = ?",
+          )
+          .get(runId),
+      );
+      return row === undefined
+        ? null
+        : {
+            runId: RunId(row.run_id),
+            phase: decodePhase(row.phase),
+            baseUrl: new URL(row.base_url),
+          };
+    });
+  }
+
+  startInspection(
     runId: RunId,
     baseUrl: URL,
-  ): Effect.Effect<void, WorkflowStoreError> {
-    return this.transaction("begin start", () => {
-      this.database
-        .prepare(
-          "INSERT INTO runs (run_id, phase, base_url) VALUES (?, ?, ?)",
-        )
-        .run(runId, "inspectingChanges", baseUrl.href);
-      this.database
-        .prepare(
-          "INSERT INTO operations (operation_id, run_id, kind, status) VALUES (?, ?, ?, ?)",
-        )
-        .run(
-          `${runId}:inspect-changes:1`,
-          runId,
-          "inspect-changes",
-          "started",
+  ): Effect.Effect<
+    void,
+    ActiveRunExistsError | WorkflowStoreError
+  > {
+    return Effect.gen(this, function* () {
+      const activeRun = yield* this.tryStore("find active Run", () =>
+        asRunRow(
+          this.database
+            .prepare(
+              "SELECT run_id, phase, base_url FROM runs LIMIT 1",
+            )
+            .get(),
+        ),
+      );
+      if (activeRun !== undefined) {
+        return yield* Effect.fail(
+          new ActiveRunExistsError({
+            activeRunId: activeRun.run_id,
+          }),
         );
+      }
+
+      yield* this.transaction("begin start", () => {
+        this.database
+          .prepare(
+            "INSERT INTO runs (run_id, phase, base_url) VALUES (?, ?, ?)",
+          )
+          .run(runId, "inspectingChanges", baseUrl.href);
+        this.database
+          .prepare(
+            "INSERT INTO operations (operation_id, run_id, kind, status, recovery_policy) VALUES (?, ?, ?, ?, ?)",
+          )
+          .run(
+            `${runId}:inspect-changes:1`,
+            runId,
+            "inspect-changes",
+            "started",
+            "rerun",
+          );
+      });
     });
   }
 
@@ -122,22 +249,17 @@ export class SqliteRunStore {
 
   getStatus(
     runId: RunId,
-  ): Effect.Effect<RunStatus, WorkflowStoreError | RunNotFoundError> {
-    return Effect.flatMap(
-      this.tryStore("read Run status", () =>
-        asStatusRow(
-          this.database
-            .prepare("SELECT run_id, phase FROM runs WHERE run_id = ?")
-            .get(runId),
-        ),
-      ),
-      (row) =>
-        row === undefined
-          ? Effect.fail(new RunNotFoundError({ runId }))
-          : Effect.succeed({
-              runId: row.run_id,
-              phase: row.phase as RunStatus["phase"],
-            }),
+  ): Effect.Effect<
+    RunStatus,
+    RunNotFoundError | WorkflowStoreError
+  > {
+    return Effect.flatMap(this.loadRun(runId), (run) =>
+      run === null
+        ? Effect.fail(new RunNotFoundError({ runId }))
+        : Effect.succeed({
+            runId: run.runId,
+            phase: run.phase,
+          }),
     );
   }
 
@@ -171,7 +293,7 @@ export class SqliteRunStore {
 
 export const openSqliteRunStore = (
   databasePath: string,
-): Effect.Effect<SqliteRunStore, WorkflowStoreError, Scope.Scope> =>
+): Effect.Effect<RunStore, WorkflowStoreError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.try({
       try: () => new SqliteRunStore(new DatabaseSync(databasePath)),

@@ -2,11 +2,14 @@ import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { Effect, Fiber } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  ActiveRunExistsError,
+  ChangeInspectionError,
   type ChangeInspector,
   RunId,
+  RunBusyError,
   createWorkflowEngine,
 } from "../src/index.js";
 
@@ -121,6 +124,181 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
           phase: "awaitingAgent",
         },
       });
+    });
+  });
+
+  test("a restarted engine reruns interrupted deterministic inspection", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const runId = RunId("run-recovery-001");
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      const interrupted = await Effect.runPromise(
+        Effect.either(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const engine = yield* createWorkflowEngine({
+                databasePath,
+                changeInspector: {
+                  inspect: () =>
+                    Effect.fail(
+                      new ChangeInspectionError(
+                        "inspection process interrupted",
+                      ),
+                    ),
+                },
+              });
+              return yield* engine.dispatch(runId, {
+                type: "start",
+                baseUrl,
+              });
+            }),
+          ),
+        ),
+      );
+
+      expect(interrupted._tag).toBe("Left");
+      if (interrupted._tag === "Left") {
+        expect(interrupted.left).toBeInstanceOf(ChangeInspectionError);
+      }
+
+      const recovered = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector: {
+                inspect: () =>
+                  Effect.succeed([
+                    {
+                      kind: "modified",
+                      path: "src/dashboard.tsx",
+                    },
+                  ]),
+              },
+            });
+            return yield* engine.dispatch(runId, {
+              type: "start",
+              baseUrl,
+            });
+          }),
+        ),
+      );
+
+      expect(recovered).toMatchObject({
+        phase: "awaitingAgent",
+        pendingJob: {
+          type: "generate-plan",
+          payload: {
+            changes: [
+              {
+                kind: "modified",
+                path: "src/dashboard.tsx",
+              },
+            ],
+          },
+        },
+      });
+    });
+  });
+
+  test("a Turn lock rejects concurrent mutation before one-active-Run enforcement", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    let releaseInspection:
+      | ((changes: readonly [{ kind: string; path: string }]) => void)
+      | undefined;
+    let markInspectionStarted: (() => void) | undefined;
+    const inspectionStarted = new Promise<void>((resolve) => {
+      markInspectionStarted = resolve;
+    });
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      const firstDispatch = Effect.runFork(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector: {
+                inspect: () =>
+                  Effect.async((resume) => {
+                    releaseInspection = (changes) => {
+                      resume(Effect.succeed(changes));
+                    };
+                    markInspectionStarted?.();
+                  }),
+              },
+            });
+            return yield* engine.dispatch(RunId("run-lock-owner"), {
+              type: "start",
+              baseUrl,
+            });
+          }),
+        ),
+      );
+
+      await inspectionStarted;
+
+      const concurrent = await Effect.runPromise(
+        Effect.either(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const engine = yield* createWorkflowEngine({
+                databasePath,
+                changeInspector: {
+                  inspect: () => Effect.succeed([]),
+                },
+              });
+              return yield* engine.dispatch(
+                RunId("run-lock-contender"),
+                {
+                  type: "start",
+                  baseUrl,
+                },
+              );
+            }),
+          ),
+        ),
+      );
+
+      expect(concurrent._tag).toBe("Left");
+      if (concurrent._tag === "Left") {
+        expect(concurrent.left).toBeInstanceOf(RunBusyError);
+      }
+
+      releaseInspection?.([
+        { kind: "modified", path: "src/dashboard.tsx" },
+      ]);
+      await Effect.runPromise(Fiber.join(firstDispatch));
+
+      const afterRelease = await Effect.runPromise(
+        Effect.either(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const engine = yield* createWorkflowEngine({
+                databasePath,
+                changeInspector: {
+                  inspect: () => Effect.succeed([]),
+                },
+              });
+              return yield* engine.dispatch(
+                RunId("run-after-release"),
+                {
+                  type: "start",
+                  baseUrl,
+                },
+              );
+            }),
+          ),
+        ),
+      );
+
+      expect(afterRelease._tag).toBe("Left");
+      if (afterRelease._tag === "Left") {
+        expect(afterRelease.left).toBeInstanceOf(
+          ActiveRunExistsError,
+        );
+      }
     });
   });
 });

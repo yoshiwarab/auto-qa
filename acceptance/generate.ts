@@ -12,7 +12,7 @@ const metadataName = (featurePath: string): string =>
     .replaceAll(/[^a-z0-9]+/g, "-")
     .replaceAll(/^-|-$/g, "")}.json`;
 
-export const generateAcceptanceEntrypoint = async (
+export const generateDurablePlanEntrypoint = async (
   irPath: string,
   outputDirectory: string,
 ): Promise<void> => {
@@ -70,7 +70,7 @@ const main = async (): Promise<void> => {
   }
 
   try {
-    await generateAcceptanceEntrypoint(irPath, outputDirectory);
+    await generateDurablePlanEntrypoint(irPath, outputDirectory);
   } catch (cause) {
     process.stderr.write(
       `${cause instanceof Error ? cause.message : String(cause)}\n`,
