@@ -1,11 +1,13 @@
-import { Data, Effect } from "effect";
+import { Data, Effect, Either } from "effect";
 import type {
   ActiveRunExistsError,
   RunBusyError,
   RunNotFoundError,
   RunRecord,
   RunStore,
+  TurnLease,
   TurnOwner,
+  TurnOwnershipLostError,
   WorkflowStoreError,
 } from "./runStore.js";
 
@@ -36,6 +38,7 @@ export class InvalidTransitionError extends Data.TaggedError(
 )<{
   readonly phase: MachinePhase;
   readonly event: MachineEvent["type"];
+  readonly allowedEvents: readonly MachineEvent["type"][];
 }> {}
 
 export interface ChangeInspector {
@@ -94,6 +97,7 @@ export type WorkflowError =
   | InvalidTransitionError
   | RunBusyError
   | RunNotFoundError
+  | TurnOwnershipLostError
   | WorkflowStoreError;
 
 export interface WorkflowEngine {
@@ -117,37 +121,56 @@ export const TRANSITIONS = {
     changesInspected: "awaitingAgent",
   },
   awaitingAgent: {},
-} as const;
+} as const satisfies Record<
+  MachinePhase,
+  Partial<Record<MachineEvent["type"], MachinePhase>>
+>;
 
 export const AUTOMATIC_PHASES = {
   inspectingChanges: {
     recoveryPolicy: "rerun",
+    work: (
+      snapshot: MachineSnapshot,
+      changeInspector: ChangeInspector,
+    ) =>
+      Effect.map(
+        changeInspector.inspect(snapshot.runId, snapshot.baseUrl),
+        (changes) => ({
+          event: { type: "changesInspected" } as const,
+          changes,
+        }),
+      ),
   },
 } as const;
+
+const allowedEvents = (
+  phase: MachinePhase,
+): readonly MachineEvent["type"][] =>
+  Object.keys(TRANSITIONS[phase]) as MachineEvent["type"][];
 
 const step = (
   snapshot: MachineSnapshot,
   event: MachineEvent,
-): MachineSnapshot => {
-  const nextPhase =
-    snapshot.phase === "idle" && event.type === "start"
-      ? TRANSITIONS.idle.start
-      : snapshot.phase === "inspectingChanges" &&
-          event.type === "changesInspected"
-        ? TRANSITIONS.inspectingChanges.changesInspected
-        : undefined;
+): Either.Either<MachineSnapshot, InvalidTransitionError> => {
+  const phaseTransitions = TRANSITIONS[
+    snapshot.phase
+  ] as Partial<Record<MachineEvent["type"], MachinePhase>>;
+  const nextPhase = phaseTransitions[event.type];
 
   if (nextPhase === undefined) {
-    throw new InvalidTransitionError({
-      phase: snapshot.phase,
-      event: event.type,
-    });
+    return Either.left(
+      new InvalidTransitionError({
+        phase: snapshot.phase,
+        event: event.type,
+        allowedEvents: allowedEvents(snapshot.phase),
+      }),
+    );
   }
 
-  return {
+  return Either.right({
     ...snapshot,
     phase: nextPhase,
-  };
+  });
 };
 
 const recoveredSnapshot = (
@@ -161,6 +184,7 @@ const recoveredSnapshot = (
         new InvalidTransitionError({
           phase: run.phase,
           event: event.type,
+          allowedEvents: allowedEvents(run.phase),
         }),
       );
 
@@ -178,34 +202,80 @@ const createGeneratePlanJob = (
   },
 });
 
-const continueAutomaticWork = (
-  snapshot: MachineSnapshot,
+const runAutomaticPhases = (
+  initialSnapshot: MachineSnapshot,
+  lease: TurnLease,
   runStore: RunStore,
   changeInspector: ChangeInspector,
 ): Effect.Effect<DispatchResult, WorkflowError> =>
   Effect.gen(function* () {
-    if (snapshot.phase !== "inspectingChanges") {
+    let snapshot = initialSnapshot;
+    let pendingJob: GeneratePlanJob | undefined;
+
+    while (snapshot.phase === "inspectingChanges") {
+      const work = AUTOMATIC_PHASES.inspectingChanges;
+      const result = yield* work.work(snapshot, changeInspector);
+      const transition = step(snapshot, result.event);
+      const next =
+        transition._tag === "Left"
+          ? yield* Effect.fail(transition.left)
+          : transition.right;
+      pendingJob = createGeneratePlanJob(next, result.changes);
+      yield* runStore.completeInspection(
+        lease,
+        snapshot.runId,
+        pendingJob,
+      );
+      snapshot = next;
+    }
+
+    if (
+      snapshot.phase !== "awaitingAgent" ||
+      pendingJob === undefined
+    ) {
       return yield* Effect.fail(
         new InvalidTransitionError({
           phase: snapshot.phase,
           event: "changesInspected",
+          allowedEvents: allowedEvents(snapshot.phase),
         }),
       );
     }
-
-    const changes = yield* changeInspector.inspect(
-      snapshot.runId,
-      snapshot.baseUrl,
-    );
-    const next = step(snapshot, { type: "changesInspected" });
-    const pendingJob = createGeneratePlanJob(next, changes);
-    yield* runStore.completeInspection(snapshot.runId, pendingJob);
 
     return {
       phase: "awaitingAgent",
       pendingJob,
     };
   });
+
+const withTurn = <Result, Error>(
+  runId: RunId,
+  turnOwner: TurnOwner,
+  runStore: RunStore,
+  use: (lease: TurnLease) => Effect.Effect<Result, Error>,
+): Effect.Effect<
+  Result,
+  Error | RunBusyError | WorkflowStoreError
+> =>
+  Effect.uninterruptibleMask((restore) =>
+    Effect.flatMap(
+      runStore.acquireTurn(runId, turnOwner),
+      (lease) =>
+        restore(use(lease)).pipe(
+          Effect.matchCauseEffect({
+            onFailure: (cause) =>
+              Effect.zipRight(
+                runStore.releaseTurn(lease),
+                Effect.failCause(cause),
+              ),
+            onSuccess: (result) =>
+              runStore
+                .releaseTurn(lease)
+                .pipe(Effect.as(result)),
+          }),
+        ),
+    ),
+  );
 
 export const makeWorkflowEngine = ({
   runStore,
@@ -217,34 +287,40 @@ export const makeWorkflowEngine = ({
   readonly turnOwner: TurnOwner;
 }): WorkflowEngine => ({
   dispatch: (runId, event) =>
-    Effect.acquireUseRelease(
-      runStore.acquireTurn(runId, turnOwner),
-      () =>
+    withTurn(runId, turnOwner, runStore, (lease) =>
         Effect.gen(function* () {
           const persisted = yield* runStore.loadRun(runId);
+          const initialTransition = step(
+            {
+              runId,
+              phase: "idle",
+              baseUrl: event.baseUrl,
+            },
+            event,
+          );
           const inspecting =
             persisted === null
-              ? step(
-                  {
-                    runId,
-                    phase: "idle",
-                    baseUrl: event.baseUrl,
-                  },
-                  event,
-                )
+              ? initialTransition._tag === "Left"
+                ? yield* Effect.fail(initialTransition.left)
+                : initialTransition.right
               : yield* recoveredSnapshot(persisted, event);
 
           if (persisted === null) {
-            yield* runStore.startInspection(runId, event.baseUrl);
+            yield* runStore.startInspection(
+              lease,
+              runId,
+              event.baseUrl,
+              AUTOMATIC_PHASES.inspectingChanges.recoveryPolicy,
+            );
           }
 
-          return yield* continueAutomaticWork(
+          return yield* runAutomaticPhases(
             inspecting,
+            lease,
             runStore,
             changeInspector,
           );
         }),
-      (lease) => runStore.releaseTurn(lease).pipe(Effect.orDie),
     ),
   getPendingJob: (runId) => runStore.getPendingJob(runId),
   getStatus: (runId) => runStore.getStatus(runId),

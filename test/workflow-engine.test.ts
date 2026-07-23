@@ -8,10 +8,13 @@ import {
   ActiveRunExistsError,
   ChangeInspectionError,
   type ChangeInspector,
+  InvalidTransitionError,
   RunId,
   RunBusyError,
+  TurnOwnershipLostError,
   createWorkflowEngine,
 } from "../src/index.js";
+import { openSqliteRunStore } from "../src/sqliteRunStore.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -298,6 +301,110 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         expect(afterRelease.left).toBeInstanceOf(
           ActiveRunExistsError,
         );
+      }
+    });
+  });
+
+  test("a superseded Turn lease cannot checkpoint automatic work", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      const checkpoint = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const store = yield* openSqliteRunStore(databasePath);
+            const firstLease = yield* store.acquireTurn(
+              RunId("run-fenced-owner"),
+              {
+                processId: 101,
+                processStartedAt: "2026-07-23T20:00:00.000Z",
+                ownershipToken: "lease-001",
+              },
+            );
+            yield* store.releaseTurn(firstLease);
+            const currentLease = yield* store.acquireTurn(
+              RunId("run-fenced-owner"),
+              {
+                processId: 202,
+                processStartedAt: "2026-07-23T20:01:00.000Z",
+                ownershipToken: "lease-002",
+              },
+            );
+            const result = yield* Effect.either(
+              store.startInspection(
+                firstLease,
+                RunId("run-fenced-owner"),
+                baseUrl,
+                "rerun",
+              ),
+            );
+            yield* store.releaseTurn(currentLease);
+            return result;
+          }),
+        ),
+      );
+
+      expect(checkpoint._tag).toBe("Left");
+      if (checkpoint._tag === "Left") {
+        expect(checkpoint.left).toBeInstanceOf(
+          TurnOwnershipLostError,
+        );
+      }
+    });
+  });
+
+  test("an invalid Event reports the phase and allowed Events", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const runId = RunId("run-invalid-transition");
+    const changeInspector: ChangeInspector = {
+      inspect: () => Effect.succeed([]),
+    };
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector,
+            });
+            yield* engine.dispatch(runId, {
+              type: "start",
+              baseUrl,
+            });
+          }),
+        ),
+      );
+
+      const repeatedStart = await Effect.runPromise(
+        Effect.either(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const engine = yield* createWorkflowEngine({
+                databasePath,
+                changeInspector,
+              });
+              return yield* engine.dispatch(runId, {
+                type: "start",
+                baseUrl,
+              });
+            }),
+          ),
+        ),
+      );
+
+      expect(repeatedStart._tag).toBe("Left");
+      if (repeatedStart._tag === "Left") {
+        expect(repeatedStart.left).toBeInstanceOf(
+          InvalidTransitionError,
+        );
+        expect(repeatedStart.left).toMatchObject({
+          phase: "awaitingAgent",
+          event: "start",
+          allowedEvents: [],
+        });
       }
     });
   });

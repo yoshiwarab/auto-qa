@@ -21,5 +21,6 @@ export {
   ActiveRunExistsError,
   RunBusyError,
   RunNotFoundError,
+  TurnOwnershipLostError,
   WorkflowStoreError,
 } from "./runStore.js";

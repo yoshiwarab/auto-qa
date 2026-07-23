@@ -27,6 +27,14 @@ export class RunBusyError extends Data.TaggedError("RunBusyError")<{
   readonly owningRunId: string;
 }> {}
 
+export class TurnOwnershipLostError extends Data.TaggedError(
+  "TurnOwnershipLostError",
+)<{
+  readonly ownershipToken: string;
+}> {}
+
+export type RecoveryPolicy = "rerun";
+
 export type TurnOwner = {
   readonly processId: number;
   readonly processStartedAt: string;
@@ -58,16 +66,24 @@ export interface RunStore {
     runId: RunId,
   ) => Effect.Effect<RunRecord | null, WorkflowStoreError>;
   readonly startInspection: (
+    lease: TurnLease,
     runId: RunId,
     baseUrl: URL,
+    recoveryPolicy: RecoveryPolicy,
   ) => Effect.Effect<
     void,
-    ActiveRunExistsError | WorkflowStoreError
+    | ActiveRunExistsError
+    | TurnOwnershipLostError
+    | WorkflowStoreError
   >;
   readonly completeInspection: (
+    lease: TurnLease,
     runId: RunId,
     job: GeneratePlanJob,
-  ) => Effect.Effect<void, WorkflowStoreError>;
+  ) => Effect.Effect<
+    void,
+    TurnOwnershipLostError | WorkflowStoreError
+  >;
   readonly getPendingJob: (
     runId: RunId,
   ) => Effect.Effect<GeneratePlanJob | null, WorkflowStoreError>;

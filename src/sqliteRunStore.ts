@@ -4,10 +4,12 @@ import {
   ActiveRunExistsError,
   RunBusyError,
   RunNotFoundError,
+  type RecoveryPolicy,
   type RunRecord,
   type RunStore,
   type TurnLease,
   type TurnOwner,
+  TurnOwnershipLostError,
   WorkflowStoreError,
 } from "./runStore.js";
 import {
@@ -168,68 +170,111 @@ export class SqliteRunStore implements RunStore {
   }
 
   startInspection(
+    lease: TurnLease,
     runId: RunId,
     baseUrl: URL,
+    recoveryPolicy: RecoveryPolicy,
   ): Effect.Effect<
     void,
-    ActiveRunExistsError | WorkflowStoreError
+    | ActiveRunExistsError
+    | TurnOwnershipLostError
+    | WorkflowStoreError
   > {
     return Effect.gen(this, function* () {
-      const activeRun = yield* this.tryStore("find active Run", () =>
-        asRunRow(
+      const result = yield* this.transaction(
+        "begin start",
+        () => {
+          if (!this.ownsTurn(lease)) {
+            return { type: "ownership-lost" } as const;
+          }
+          const activeRun = asRunRow(
+            this.database
+              .prepare(
+                "SELECT run_id, phase, base_url FROM runs LIMIT 1",
+              )
+              .get(),
+          );
+          if (activeRun !== undefined) {
+            return {
+              type: "active-run",
+              runId: activeRun.run_id,
+            } as const;
+          }
+
           this.database
             .prepare(
-              "SELECT run_id, phase, base_url FROM runs LIMIT 1",
+              "INSERT INTO runs (run_id, phase, base_url) VALUES (?, ?, ?)",
             )
-            .get(),
-        ),
+            .run(runId, "inspectingChanges", baseUrl.href);
+          this.database
+            .prepare(
+              "INSERT INTO operations (operation_id, run_id, kind, status, recovery_policy) VALUES (?, ?, ?, ?, ?)",
+            )
+            .run(
+              `${runId}:inspect-changes:1`,
+              runId,
+              "inspect-changes",
+              "started",
+              recoveryPolicy,
+            );
+          return { type: "started" } as const;
+        },
       );
-      if (activeRun !== undefined) {
+
+      if (result.type === "ownership-lost") {
         return yield* Effect.fail(
-          new ActiveRunExistsError({
-            activeRunId: activeRun.run_id,
+          new TurnOwnershipLostError({
+            ownershipToken: lease.ownershipToken,
           }),
         );
       }
-
-      yield* this.transaction("begin start", () => {
-        this.database
-          .prepare(
-            "INSERT INTO runs (run_id, phase, base_url) VALUES (?, ?, ?)",
-          )
-          .run(runId, "inspectingChanges", baseUrl.href);
-        this.database
-          .prepare(
-            "INSERT INTO operations (operation_id, run_id, kind, status, recovery_policy) VALUES (?, ?, ?, ?, ?)",
-          )
-          .run(
-            `${runId}:inspect-changes:1`,
-            runId,
-            "inspect-changes",
-            "started",
-            "rerun",
-          );
-      });
+      if (result.type === "active-run") {
+        return yield* Effect.fail(
+          new ActiveRunExistsError({
+            activeRunId: result.runId,
+          }),
+        );
+      }
     });
   }
 
   completeInspection(
+    lease: TurnLease,
     runId: RunId,
     job: GeneratePlanJob,
-  ): Effect.Effect<void, WorkflowStoreError> {
-    return this.transaction("complete change inspection", () => {
-      this.database
-        .prepare("UPDATE operations SET status = ? WHERE operation_id = ?")
-        .run("completed", `${runId}:inspect-changes:1`);
-      this.database
-        .prepare(
-          "INSERT INTO jobs (job_id, run_id, job_json) VALUES (?, ?, ?)",
-        )
-        .run(job.id, runId, JSON.stringify(job));
-      this.database
-        .prepare("UPDATE runs SET phase = ? WHERE run_id = ?")
-        .run("awaitingAgent", runId);
-    });
+  ): Effect.Effect<
+    void,
+    TurnOwnershipLostError | WorkflowStoreError
+  > {
+    return Effect.flatMap(
+      this.transaction("complete change inspection", () => {
+        if (!this.ownsTurn(lease)) {
+          return false;
+        }
+        this.database
+          .prepare(
+            "UPDATE operations SET status = ? WHERE operation_id = ?",
+          )
+          .run("completed", `${runId}:inspect-changes:1`);
+        this.database
+          .prepare(
+            "INSERT INTO jobs (job_id, run_id, job_json) VALUES (?, ?, ?)",
+          )
+          .run(job.id, runId, JSON.stringify(job));
+        this.database
+          .prepare("UPDATE runs SET phase = ? WHERE run_id = ?")
+          .run("awaitingAgent", runId);
+        return true;
+      }),
+      (ownsTurn) =>
+        ownsTurn
+          ? Effect.void
+          : Effect.fail(
+              new TurnOwnershipLostError({
+                ownershipToken: lease.ownershipToken,
+              }),
+            ),
+    );
   }
 
   getPendingJob(
@@ -278,6 +323,16 @@ export class SqliteRunStore implements RunStore {
         throw error;
       }
     });
+  }
+
+  private ownsTurn(lease: TurnLease): boolean {
+    return (
+      this.database
+        .prepare(
+          "SELECT 1 AS owns_turn FROM turn_lock WHERE lock_id = 1 AND ownership_token = ?",
+        )
+        .get(lease.ownershipToken) !== undefined
+    );
   }
 
   private tryStore<Result>(
