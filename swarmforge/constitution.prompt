@@ -1,0 +1,8 @@
+# SwarmForge Constitution
+
+This file takes precedence over article files.
+Read and obey every file in `swarmforge/scripts/shared-articles/`, then every
+file in `swarmforge/constitution/articles/`.
+Project-local articles specialize the shared rules for TypeScript, Effect,
+Playwright, pnpm, and this repository's test architecture.
+

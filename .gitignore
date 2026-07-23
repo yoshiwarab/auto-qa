@@ -1,0 +1,31 @@
+# dependencies and build output
+node_modules/
+dist/
+build/
+coverage/
+reports/
+tmp/
+*.tsbuildinfo
+
+# local environment
+.env
+.env.*
+!.env.example
+.DS_Store
+*.pem
+
+# Auto-QA runtime data
+.auto-qa/
+
+# SwarmForge runtime data
+.swarmforge/
+.worktrees/
+swarmforge/scripts/
+
+# local agent tooling
+.expect/
+
+# debug logs
+npm-debug.log*
+pnpm-debug.log*
+

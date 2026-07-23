@@ -1,0 +1,3 @@
+# Use a Job for explicit rerun approval
+
+When failed, interrupted, or infrastructure-affected Scenarios are eligible but unsafe to rerun automatically, Auto-QA will stop at `awaitingAgent` with a `confirm-rerun` Job listing the eligible Scenario ids, prior Attempts, causes, remaining limits, and the alternatives `rerun` or `report-inconclusive`. The coding agent answers through the generic `SUBMIT_JOB` protocol; `rerun --failed` is CLI sugar for the same response. This keeps explicit risk acceptance idempotent, auditable, and host-neutral without smuggling imperative actions into Finding classifications.

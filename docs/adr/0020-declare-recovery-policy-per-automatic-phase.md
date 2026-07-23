@@ -1,0 +1,3 @@
+# Declare recovery policy per automatic phase
+
+Every automatic phase will declare a recovery policy alongside its work: deterministic phases may rerun safely, interrupted Scenario execution or reruns become Findings without silent repetition, and interrupted application-owned Auth Setup blocks because it may have unknowable server-side effects. From that block, an explicit external choice may start a fresh Auth Setup operation or abandon the Run; Auto-QA never resumes the interrupted operation or retries it silently. Generated coverage will require every automatic phase to choose a policy rather than routing unrelated interruptions through Scenario evaluation.

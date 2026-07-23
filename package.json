@@ -1,0 +1,23 @@
+{
+  "name": "auto-qa",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "swarm:start": "bash scripts/swarmforge-project.sh start",
+    "swarm:start:ghostty": "bash scripts/swarmforge-project.sh start ghostty",
+    "swarm:start:terminal": "bash scripts/swarmforge-project.sh start current",
+    "swarm:status": "bash scripts/swarmforge-project.sh status",
+    "swarm:attach": "bash scripts/swarmforge-project.sh attach integrated",
+    "swarm:attach:specifier": "bash scripts/swarmforge-project.sh attach specifier",
+    "swarm:attach:coder": "bash scripts/swarmforge-project.sh attach coder",
+    "swarm:attach:refactorer": "bash scripts/swarmforge-project.sh attach refactorer",
+    "swarm:attach:architect": "bash scripts/swarmforge-project.sh attach architect",
+    "swarm:stop": "bash scripts/swarmforge-project.sh stop"
+  }
+}
+

@@ -1,0 +1,3 @@
+# Require agent classification of nonpassing Attempts
+
+Auto-QA will not infer an application defect directly from a failed or interrupted Scenario Attempt. After an execution batch, every new nonpassing Attempt contributes one Finding to a single atomic `classify-findings` Job: `app-defect` becomes a Confirmed Defect, `likely-defect` and `observation` are reported without authorizing edits, `test-issue` requests a bounded replacement Scenario Script, and `infra-issue` may request explicit rather than silent rerun. `interrupted` is an Attempt status and Finding cause, not an agent classification; its next action is an explicit rerun or an inconclusive report.
