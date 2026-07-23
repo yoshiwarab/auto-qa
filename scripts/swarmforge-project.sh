@@ -64,22 +64,22 @@ start_swarm() {
   exec env SWARMFORGE_RUNTIME=herdr ./swarm
 }
 
-runtime_value() {
-  local expression="$1"
-  ROOT_DIR="$ROOT_DIR" EXPRESSION="$expression" bb -e '
+runtime_value_at() {
+  local edn_path="$1"
+  ROOT_DIR="$ROOT_DIR" EDN_PATH="$edn_path" bb -e '
     (require (quote clojure.edn))
     (let [state (clojure.edn/read-string (slurp (str (System/getenv "ROOT_DIR") "/.swarmforge/runtime.edn")))]
-      (println (get-in state (clojure.edn/read-string (System/getenv "EXPRESSION")))))'
+      (println (get-in state (clojure.edn/read-string (System/getenv "EDN_PATH")))))'
 }
 
 show_status() {
   if [[ ! -s "$RUNTIME_FILE" ]]; then
-    printf 'No active project swarm. Start one with `pnpm swarm:start`.\n'
+    printf 'No active project swarm. Start one with `fnm exec --using 22 pnpm swarm:start`.\n'
     return 0
   fi
 
   local session
-  session="$(runtime_value '[:instance]')"
+  session="$(runtime_value_at '[:instance]')"
   printf 'Herdr session: %s\n' "$session"
   herdr --session "$session" workspace list
 }
@@ -96,16 +96,16 @@ attach_role() {
   esac
 
   if [[ ! -s "$RUNTIME_FILE" ]]; then
-    printf 'No active project swarm. Start one with `pnpm swarm:start`.\n' >&2
+    printf 'No active project swarm. Start one with `fnm exec --using 22 pnpm swarm:start`.\n' >&2
     exit 1
   fi
 
   local session terminal_id
-  session="$(runtime_value '[:instance]')"
+  session="$(runtime_value_at '[:instance]')"
   if [[ "$role" == "integrated" || -z "$role" ]]; then
     exec herdr --session "$session"
   fi
-  terminal_id="$(runtime_value "[:roles \"$role\" :handle :terminal-id]")"
+  terminal_id="$(runtime_value_at "[:roles \"$role\" :handle :terminal-id]")"
   exec herdr --session "$session" terminal attach "$terminal_id"
 }
 
@@ -148,4 +148,3 @@ case "${1:-}" in
     exit 2
     ;;
 esac
-

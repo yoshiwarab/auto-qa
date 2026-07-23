@@ -38,4 +38,3 @@ You are the architect.
 - Send a functional commit to the specifier only after the approved behavior is
   complete and all appropriate gates pass.
 - Do not send empty or manifest-only completion handoffs to the specifier.
-

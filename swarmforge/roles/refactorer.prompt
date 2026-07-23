@@ -34,4 +34,3 @@ You are the refactorer.
   suite, typecheck, and lint.
 - Commit when green and notify the architect using the file-based handoff
   protocol.
-

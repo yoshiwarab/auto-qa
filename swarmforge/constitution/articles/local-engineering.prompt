@@ -40,4 +40,3 @@ These rules specialize the shared engineering constitution for Auto-QA.
 - Use the APS-supplied `gherkin-parser`; do not reimplement it.
 - Prefer a stable in-process public seam for early acceptance slices, adding the
   packaged CLI and real browser only when the behavior requires those seams.
-

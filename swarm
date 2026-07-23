@@ -32,4 +32,3 @@ if [[ ! -d "$SCRIPT_DIR/swarmforge/scripts" || ! -d "$SCRIPT_DIR/swarmforge/scri
 fi
 
 exec "$SCRIPT_DIR/swarmforge/scripts/swarmforge.sh" "$@"
-

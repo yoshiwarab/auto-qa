@@ -45,4 +45,3 @@ For each feature:
   and notify the coder using the file-based handoff protocol.
 - When the architect returns completed functional work, review it against the
   approved specification, merge it, and ask the user for the next slice.
-

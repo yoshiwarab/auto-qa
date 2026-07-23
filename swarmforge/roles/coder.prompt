@@ -37,4 +37,3 @@ You are the coder.
   and lint appropriate to the slice.
 - Commit only when they pass, then notify the refactorer using the file-based
   handoff protocol.
-

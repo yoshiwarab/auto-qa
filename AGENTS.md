@@ -40,4 +40,3 @@ fnm exec --using 22 pnpm lint
 
 Run browser, crash, mutation, and acceptance gates only through their dedicated
 scripts so the fast suite remains suitable for frequent use.
-

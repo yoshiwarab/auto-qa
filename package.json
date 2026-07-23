@@ -20,4 +20,3 @@
     "swarm:stop": "bash scripts/swarmforge-project.sh stop"
   }
 }
-

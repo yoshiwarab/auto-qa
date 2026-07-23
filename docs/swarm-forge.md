@@ -31,7 +31,7 @@ From an ordinary SSH terminal:
 
 ```bash
 cd /home/dev/src/auto-qa
-pnpm swarm:start:terminal
+fnm exec --using 22 pnpm swarm:start:terminal
 ```
 
 That runs the normal `./swarm` command with:
@@ -45,13 +45,13 @@ and attaches Herdr's integrated project view in the current terminal. To let
 the launcher choose its presentation surface, use:
 
 ```bash
-pnpm swarm:start
+fnm exec --using 22 pnpm swarm:start
 ```
 
 For Ghostty:
 
 ```bash
-pnpm swarm:start:ghostty
+fnm exec --using 22 pnpm swarm:start:ghostty
 ```
 
 The first role is the specifier in the main checkout. It reads the existing
@@ -62,12 +62,12 @@ to the coder.
 ## Observe and attach
 
 ```bash
-pnpm swarm:status
-pnpm swarm:attach
-pnpm swarm:attach:specifier
-pnpm swarm:attach:coder
-pnpm swarm:attach:refactorer
-pnpm swarm:attach:architect
+fnm exec --using 22 pnpm swarm:status
+fnm exec --using 22 pnpm swarm:attach
+fnm exec --using 22 pnpm swarm:attach:specifier
+fnm exec --using 22 pnpm swarm:attach:coder
+fnm exec --using 22 pnpm swarm:attach:refactorer
+fnm exec --using 22 pnpm swarm:attach:architect
 ```
 
 Detach from Herdr with `Ctrl-b q`; this leaves the agents, handoff daemon, and
@@ -76,7 +76,7 @@ sleep inhibitor running.
 ## Stop
 
 ```bash
-pnpm swarm:stop
+fnm exec --using 22 pnpm swarm:stop
 ```
 
 Stopping preserves role worktrees and durable handoff state. Do not use
@@ -90,4 +90,3 @@ processes.
 - `SWARMFORGE_SCRIPTS_URL` changes the fallback archive.
 - `SWARMFORGE_ALLOW_DIRTY=1` deliberately bypasses the clean-baseline guard.
 - `SWARMFORGE_TERM` overrides the Ghostty compatibility terminal type.
-
