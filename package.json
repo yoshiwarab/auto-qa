@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "auto-qa": "dist/src/cli.js"
+  },
   "packageManager": "pnpm@11.17.0",
   "engines": {
     "node": ">=22"

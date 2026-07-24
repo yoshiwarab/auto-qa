@@ -25,12 +25,22 @@ export const generateDurablePlanEntrypoint = async (
     `${stem}.acceptance.test.ts`,
   );
   const featurePath = normalizePath(join("features", `${stem}.feature`));
+  const binding =
+    stem === "cli-durable-generate-plan-handoff"
+      ? {
+          module: "cliDurableGeneratePlanHandoff",
+          name: "cliDurableGeneratePlanHandoff",
+        }
+      : {
+          module: "durableGeneratePlanHandoff",
+          name: "durableGeneratePlanHandoff",
+        };
   const generatedSource = `import { registerFeature } from "../../../acceptance/runtime.js";
-import { durableGeneratePlanHandoff } from "../../../acceptance/durableGeneratePlanHandoff.js";
+import { ${binding.name} } from "../../../acceptance/${binding.module}.js";
 
 const feature = ${JSON.stringify(feature, null, 2)} as const;
 
-registerFeature(feature, durableGeneratePlanHandoff);
+registerFeature(feature, ${binding.name});
 `;
 
   await mkdir(join(outputDirectory, "metadata"), { recursive: true });
