@@ -1,4 +1,4 @@
-import { Data, Effect, Either } from "effect";
+import { Effect } from "effect";
 import type {
   ActiveRunExistsError,
   RunBusyError,
@@ -10,14 +10,17 @@ import type {
   TurnOwnershipLostError,
   WorkflowStoreError,
 } from "./runStore.js";
-
-declare const RunIdType: unique symbol;
-
-export type RunId = string & {
-  readonly [RunIdType]: "RunId";
-};
-
-export const RunId = (value: string): RunId => value as RunId;
+import {
+  InvalidTransitionError,
+  allowedEvents,
+  step,
+  type ExternalEvent,
+  type MachinePhase,
+  type MachineSnapshot,
+  type RunId,
+  type RunPhase,
+  type StartEvent,
+} from "./workflowMachine.js";
 
 export type Change = {
   readonly kind: string;
@@ -33,34 +36,12 @@ export class ChangeInspectionError {
   ) {}
 }
 
-export class InvalidTransitionError extends Data.TaggedError(
-  "InvalidTransitionError",
-)<{
-  readonly phase: MachinePhase;
-  readonly event: MachineEvent["type"];
-  readonly allowedEvents: readonly MachineEvent["type"][];
-}> {}
-
 export interface ChangeInspector {
   readonly inspect: (
     runId: RunId,
     baseUrl: URL,
   ) => Effect.Effect<readonly Change[], ChangeInspectionError>;
 }
-
-export type StartEvent = {
-  readonly type: "start";
-  readonly baseUrl: URL;
-};
-
-export type ExternalEvent = StartEvent;
-
-export type ChangesInspectedEvent = {
-  readonly type: "changesInspected";
-};
-
-export type MachineEvent = ExternalEvent | ChangesInspectedEvent;
-export type MachineEventType = MachineEvent["type"];
 
 export type GeneratePlanJob = {
   readonly schemaVersion: 1;
@@ -71,15 +52,6 @@ export type GeneratePlanJob = {
     readonly baseUrl: string;
     readonly changes: readonly Change[];
   };
-};
-
-export type RunPhase = "inspectingChanges" | "awaitingAgent";
-export type MachinePhase = "idle" | RunPhase;
-
-export type MachineSnapshot = {
-  readonly runId: RunId;
-  readonly phase: MachinePhase;
-  readonly baseUrl: URL;
 };
 
 export type DispatchResult = {
@@ -114,19 +86,6 @@ export interface WorkflowEngine {
   ) => Effect.Effect<RunStatus, WorkflowError>;
 }
 
-export const TRANSITIONS = {
-  idle: {
-    start: "inspectingChanges",
-  },
-  inspectingChanges: {
-    changesInspected: "awaitingAgent",
-  },
-  awaitingAgent: {},
-} as const satisfies Record<
-  MachinePhase,
-  Partial<Record<MachineEvent["type"], MachinePhase>>
->;
-
 export const AUTOMATIC_PHASES = {
   inspectingChanges: {
     recoveryPolicy: "rerun",
@@ -143,36 +102,6 @@ export const AUTOMATIC_PHASES = {
       ),
   },
 } as const;
-
-const allowedEvents = (
-  phase: MachinePhase,
-): readonly MachineEvent["type"][] =>
-  Object.keys(TRANSITIONS[phase]) as MachineEvent["type"][];
-
-export const step = (
-  snapshot: MachineSnapshot,
-  event: MachineEvent,
-): Either.Either<MachineSnapshot, InvalidTransitionError> => {
-  const phaseTransitions = TRANSITIONS[
-    snapshot.phase
-  ] as Partial<Record<MachineEvent["type"], MachinePhase>>;
-  const nextPhase = phaseTransitions[event.type];
-
-  if (nextPhase === undefined) {
-    return Either.left(
-      new InvalidTransitionError({
-        phase: snapshot.phase,
-        event: event.type,
-        allowedEvents: allowedEvents(snapshot.phase),
-      }),
-    );
-  }
-
-  return Either.right({
-    ...snapshot,
-    phase: nextPhase,
-  });
-};
 
 type AutomaticPhase = keyof typeof AUTOMATIC_PHASES;
 

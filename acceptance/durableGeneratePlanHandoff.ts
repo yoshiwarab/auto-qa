@@ -13,6 +13,7 @@ import {
   type DispatchResult,
   type GeneratePlanJob,
   type RunStatus,
+  type WorkflowEngine,
 } from "../src/index.js";
 import type {
   FeatureBindings,
@@ -28,6 +29,27 @@ type World = {
   restartedJob?: GeneratePlanJob | null;
   restartedStatus?: RunStatus;
 };
+
+const noChangesInspector: ChangeInspector = {
+  inspect: () => Effect.succeed([]),
+};
+
+const useEngine = <Result, Error, Requirements>(
+  world: World,
+  changeInspector: ChangeInspector,
+  use: (
+    engine: WorkflowEngine,
+  ) => Effect.Effect<Result, Error, Requirements>,
+) =>
+  Effect.scoped(
+    Effect.flatMap(
+      createWorkflowEngine({
+        databasePath: world.databasePath,
+        changeInspector,
+      }),
+      use,
+    ),
+  );
 
 const listen = (server: Server): Effect.Effect<URL, Error> =>
   Effect.async<URL, Error>((resume) => {
@@ -102,16 +124,10 @@ const handlers: readonly StepHandler<World>[] = [
     run: (world) =>
       Effect.gen(function* () {
         const error = yield* Effect.flip(
-          Effect.scoped(
-            Effect.gen(function* () {
-              const engine = yield* createWorkflowEngine({
-                databasePath: world.databasePath,
-                changeInspector: {
-                  inspect: () => Effect.succeed([]),
-                },
-              });
-              return yield* engine.getStatus(world.runId);
-            }),
+          useEngine(
+            world,
+            noChangesInspector,
+            (engine) => engine.getStatus(world.runId),
           ),
         );
         expect(error).toBeInstanceOf(RunNotFoundError);
@@ -135,17 +151,14 @@ const handlers: readonly StepHandler<World>[] = [
         const changeInspector: ChangeInspector = {
           inspect: () => Effect.succeed(world.changes),
         };
-        world.dispatchResult = yield* Effect.scoped(
-          Effect.gen(function* () {
-            const engine = yield* createWorkflowEngine({
-              databasePath: world.databasePath,
-              changeInspector,
-            });
-            return yield* engine.dispatch(world.runId, {
+        world.dispatchResult = yield* useEngine(
+          world,
+          changeInspector,
+          (engine) =>
+            engine.dispatch(world.runId, {
               type: "start",
               baseUrl: world.baseUrl,
-            });
-          }),
+            }),
         );
       }),
   },
@@ -170,16 +183,10 @@ const handlers: readonly StepHandler<World>[] = [
       /^a restarted Workflow Engine returns the same generate-plan Job for the Run$/,
     run: (world) =>
       Effect.gen(function* () {
-        world.restartedJob = yield* Effect.scoped(
-          Effect.gen(function* () {
-            const engine = yield* createWorkflowEngine({
-              databasePath: world.databasePath,
-              changeInspector: {
-                inspect: () => Effect.succeed([]),
-              },
-            });
-            return yield* engine.getPendingJob(world.runId);
-          }),
+        world.restartedJob = yield* useEngine(
+          world,
+          noChangesInspector,
+          (engine) => engine.getPendingJob(world.runId),
         );
         expect(world.restartedJob).toEqual(
           world.dispatchResult?.pendingJob,
@@ -191,16 +198,10 @@ const handlers: readonly StepHandler<World>[] = [
       /^the restarted Workflow Engine reports the Run in phase awaitingAgent$/,
     run: (world) =>
       Effect.gen(function* () {
-        world.restartedStatus = yield* Effect.scoped(
-          Effect.gen(function* () {
-            const engine = yield* createWorkflowEngine({
-              databasePath: world.databasePath,
-              changeInspector: {
-                inspect: () => Effect.succeed([]),
-              },
-            });
-            return yield* engine.getStatus(world.runId);
-          }),
+        world.restartedStatus = yield* useEngine(
+          world,
+          noChangesInspector,
+          (engine) => engine.getStatus(world.runId),
         );
         expect(world.restartedStatus).toEqual({
           runId: "acceptance-run-001",

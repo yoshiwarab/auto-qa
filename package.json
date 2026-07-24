@@ -10,9 +10,11 @@
   "scripts": {
     "acceptance": "bash scripts/acceptance.sh",
     "acceptance:setup": "bash scripts/setup-acceptance-tools.sh",
+    "analyze:duplication": "jscpd src acceptance test --min-lines 5 --min-tokens 50 --reporters console --ignore '**/build/**,**/dist/**,**/node_modules/**,**/tmp/**' --no-colors --no-tips",
     "build": "tsc --project tsconfig.build.json",
     "lint": "eslint .",
     "test": "vitest run --config vitest.config.ts",
+    "test:coverage": "vitest run --config vitest.config.ts --coverage --coverage.include='src/**/*.ts' --coverage.reporter=text --coverage.reportsDirectory=build/coverage",
     "typecheck": "tsc --project tsconfig.json",
     "swarm:start": "bash scripts/swarmforge-project.sh start",
     "swarm:start:ghostty": "bash scripts/swarmforge-project.sh start ghostty",
@@ -32,7 +34,9 @@
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@types/node": "^22.20.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^9.39.5",
+    "jscpd": "^5.0.12",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10"

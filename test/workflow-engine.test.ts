@@ -12,6 +12,7 @@ import {
   RunId,
   RunBusyError,
   TurnOwnershipLostError,
+  WorkflowStoreError,
   createWorkflowEngine,
 } from "../src/index.js";
 import { openSqliteRunStore } from "../src/sqliteRunStore.js";
@@ -62,6 +63,49 @@ afterEach(async () => {
 });
 
 describe("WorkflowEngine durable generate-plan handoff", () => {
+  test("a Run with no durable state has no pending Job", async () => {
+    const directory = await makeTemporaryDirectory();
+    const pendingJob = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const engine = yield* createWorkflowEngine({
+            databasePath: join(directory, "state.db"),
+            changeInspector: {
+              inspect: () => Effect.succeed([]),
+            },
+          });
+          return yield* engine.getPendingJob(RunId("missing-run"));
+        }),
+      ),
+    );
+
+    expect(pendingJob).toBeNull();
+  });
+
+  test("an unavailable database is reported as a typed store failure", async () => {
+    const directory = await makeTemporaryDirectory();
+    const result = await Effect.runPromise(
+      Effect.either(
+        Effect.scoped(
+          createWorkflowEngine({
+            databasePath: join(directory, "missing", "state.db"),
+            changeInspector: {
+              inspect: () => Effect.succeed([]),
+            },
+          }),
+        ),
+      ),
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left).toBeInstanceOf(WorkflowStoreError);
+      expect(result.left).toMatchObject({
+        operation: "open Run Store",
+      });
+    }
+  });
+
   test("a restarted engine returns the generate-plan Job created by start", async () => {
     const directory = await makeTemporaryDirectory();
     const databasePath = join(directory, "state.db");
