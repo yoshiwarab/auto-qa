@@ -18,14 +18,21 @@ import {
   type MachinePhase,
   type MachineSnapshot,
   type RunId,
-  type RunPhase,
   type StartEvent,
 } from "./workflowMachine.js";
+import type {
+  Change,
+  DispatchResult,
+  GeneratePlanJob,
+  RunStatus,
+} from "./workflowProtocol.js";
 
-export type Change = {
-  readonly kind: string;
-  readonly path: string;
-};
+export type {
+  Change,
+  DispatchResult,
+  GeneratePlanJob,
+  RunStatus,
+} from "./workflowProtocol.js";
 
 export class ChangeInspectionError {
   readonly _tag = "ChangeInspectionError";
@@ -37,32 +44,11 @@ export class ChangeInspectionError {
 }
 
 export interface ChangeInspector {
-  readonly inspect: (
-    runId: RunId,
-    baseUrl: URL,
-  ) => Effect.Effect<readonly Change[], ChangeInspectionError>;
+  readonly inspect: () => Effect.Effect<
+    readonly Change[],
+    ChangeInspectionError
+  >;
 }
-
-export type GeneratePlanJob = {
-  readonly schemaVersion: 1;
-  readonly id: string;
-  readonly type: "generate-plan";
-  readonly runId: string;
-  readonly payload: {
-    readonly baseUrl: string;
-    readonly changes: readonly Change[];
-  };
-};
-
-export type DispatchResult = {
-  readonly phase: "awaitingAgent";
-  readonly pendingJob: GeneratePlanJob;
-};
-
-export type RunStatus = {
-  readonly runId: string;
-  readonly phase: RunPhase;
-};
 
 export type WorkflowError =
   | ActiveRunExistsError
@@ -94,7 +80,7 @@ export const AUTOMATIC_PHASES = {
       changeInspector: ChangeInspector,
     ) =>
       Effect.map(
-        changeInspector.inspect(snapshot.runId, snapshot.baseUrl),
+        changeInspector.inspect(),
         (changes) => ({
           event: { type: "changesInspected" } as const,
           changes,
@@ -216,14 +202,14 @@ const withTurn = <Result, Error>(
 export const makeWorkflowEngine = ({
   runStore,
   changeInspector,
-  turnOwner,
+  makeTurnOwner,
 }: {
   readonly runStore: RunStore;
   readonly changeInspector: ChangeInspector;
-  readonly turnOwner: TurnOwner;
+  readonly makeTurnOwner: () => TurnOwner;
 }): WorkflowEngine => ({
   dispatch: (runId, event) =>
-    withTurn(runId, turnOwner, runStore, (lease) =>
+    withTurn(runId, makeTurnOwner(), runStore, (lease) =>
         Effect.gen(function* () {
           const persisted = yield* runStore.loadRun(runId);
           const initialTransition = step(

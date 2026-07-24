@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Either } from "effect";
 import {
+  InvalidTransitionError,
   RunId,
   TRANSITIONS,
   step,
@@ -58,6 +59,30 @@ const eventTypes = Object.keys(
 
 const eventFor = (eventType: MachineEventType): MachineEvent =>
   eventFixtures[eventType]();
+
+describe("Workflow machine public values", () => {
+  test("RunId preserves its serialized value", () => {
+    expect(RunId("machine-run")).toBe("machine-run");
+  });
+
+  test("invalid transitions return the tagged domain error", () => {
+    const result = step(
+      {
+        runId: RunId("machine-run"),
+        phase: "idle",
+        baseUrl,
+      },
+      { type: "changesInspected" },
+    );
+
+    expect(Either.isLeft(result)).toBe(true);
+    if (Either.isLeft(result)) {
+      expect(result.left).toBeInstanceOf(InvalidTransitionError);
+      expect(result.left._tag).toBe("InvalidTransitionError");
+      expect(result.left.allowedEvents).toEqual(["start"]);
+    }
+  });
+});
 
 describe("Workflow machine Phase × Event coverage", () => {
   for (const phase of phases) {

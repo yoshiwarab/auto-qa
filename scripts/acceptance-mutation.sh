@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+aps_root="${AUTO_QA_APS_ROOT:-"$project_root/tmp/acceptance-pipeline-specification"}"
+feature="features/durable-generate-plan-handoff.feature"
+ir="build/acceptance/ir/durable-generate-plan-handoff.json"
+generated="build/acceptance/generated"
+mutation_work="build/acceptance-mutation"
+
+if [[ ! -f "$aps_root/bb.edn" ]]; then
+  echo "APS tools not found at $aps_root; run pnpm acceptance:setup." >&2
+  exit 1
+fi
+
+cd "$project_root"
+
+mkdir -p "$(dirname "$ir")" "$generated"
+bb --config "$aps_root/bb.edn" gherkin-parser "$feature" "$ir"
+
+node "$project_root/node_modules/typescript/bin/tsc" \
+  --project "$project_root/tsconfig.build.json"
+node "$project_root/dist/acceptance/generate.js" "$ir" "$generated"
+
+bb --config "$aps_root/bb.edn" gherkin-mutator \
+  --feature "$feature" \
+  --work-dir "$mutation_work" \
+  --generated-dir "$generated" \
+  --workers 2 \
+  --timeout 30s \
+  --status-interval 5s \
+  --level soft \
+  --runner-worker "node $project_root/dist/acceptance/mutationWorker.js"

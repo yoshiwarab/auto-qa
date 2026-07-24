@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { Effect, Scope } from "effect";
 import { describe, test } from "vitest";
 import type {
@@ -17,6 +18,20 @@ export type StepHandler<World> = {
 export type FeatureBindings<World> = {
   readonly makeWorld: Effect.Effect<World, unknown, Scope.Scope>;
   readonly handlers: readonly StepHandler<World>[];
+};
+
+const featureForCurrentRun = (
+  generatedFeature: GherkinFeature,
+): GherkinFeature => {
+  const mutationFeaturePath =
+    process.env["AUTO_QA_ACCEPTANCE_FEATURE_JSON"];
+  if (mutationFeaturePath === undefined) {
+    return generatedFeature;
+  }
+
+  return JSON.parse(
+    readFileSync(mutationFeaturePath, "utf8"),
+  ) as GherkinFeature;
 };
 
 const executeStep = <World>(
@@ -49,9 +64,10 @@ const executeStep = <World>(
 };
 
 export const registerFeature = <World>(
-  feature: GherkinFeature,
+  generatedFeature: GherkinFeature,
   bindings: FeatureBindings<World>,
 ): void => {
+  const feature = featureForCurrentRun(generatedFeature);
   describe(feature.name, () => {
     for (const scenario of feature.scenarios) {
       const examples =

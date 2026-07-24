@@ -13,13 +13,13 @@ import {
   WorkflowStoreError,
 } from "./runStore.js";
 import {
-  type GeneratePlanJob,
-  type RunStatus,
-} from "./workflowEngine.js";
-import {
   RunId,
   type RunPhase,
 } from "./workflowMachine.js";
+import type {
+  GeneratePlanJob,
+  RunStatus,
+} from "./workflowProtocol.js";
 
 type JobRow = {
   readonly job_json: string;

@@ -22,16 +22,20 @@ const makeTurnOwner = (): TurnOwner => ({
 export const createWorkflowEngine = ({
   databasePath,
   changeInspector,
-  turnOwner = makeTurnOwner(),
+  turnOwnerFactory = makeTurnOwner,
 }: {
   readonly databasePath: string;
   readonly changeInspector: ChangeInspector;
-  readonly turnOwner?: TurnOwner;
+  readonly turnOwnerFactory?: () => TurnOwner;
 }): Effect.Effect<
   WorkflowEngine,
   WorkflowStoreError,
   Scope.Scope
 > =>
   Effect.map(openSqliteRunStore(databasePath), (runStore) =>
-    makeWorkflowEngine({ runStore, changeInspector, turnOwner }),
+    makeWorkflowEngine({
+      runStore,
+      changeInspector,
+      makeTurnOwner: turnOwnerFactory,
+    }),
   );

@@ -1,12 +1,12 @@
 import { Data, Effect } from "effect";
 import type {
-  GeneratePlanJob,
-  RunStatus,
-} from "./workflowEngine.js";
-import type {
   RunId,
   RunPhase,
 } from "./workflowMachine.js";
+import type {
+  GeneratePlanJob,
+  RunStatus,
+} from "./workflowProtocol.js";
 
 export class WorkflowStoreError extends Data.TaggedError(
   "WorkflowStoreError",

@@ -452,4 +452,53 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
       }
     });
   });
+
+  test("each dispatch allocates fresh Turn ownership", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const runId = RunId("run-unique-turn-owner");
+    const ownershipTokens: string[] = [];
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      const repeatedStart = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector: {
+                inspect: () => Effect.succeed([]),
+              },
+              turnOwnerFactory: () => {
+                const ownershipToken = `turn-${ownershipTokens.length + 1}`;
+                ownershipTokens.push(ownershipToken);
+                return {
+                  processId: 101,
+                  processStartedAt: "2026-07-23T20:00:00.000Z",
+                  ownershipToken,
+                };
+              },
+            });
+            yield* engine.dispatch(runId, {
+              type: "start",
+              baseUrl,
+            });
+            return yield* Effect.either(
+              engine.dispatch(runId, {
+                type: "start",
+                baseUrl,
+              }),
+            );
+          }),
+        ),
+      );
+
+      expect(repeatedStart._tag).toBe("Left");
+      if (repeatedStart._tag === "Left") {
+        expect(repeatedStart.left).toBeInstanceOf(
+          InvalidTransitionError,
+        );
+      }
+      expect(ownershipTokens).toEqual(["turn-1", "turn-2"]);
+    });
+  });
 });
