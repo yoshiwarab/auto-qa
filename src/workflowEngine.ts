@@ -55,11 +55,12 @@ export type StartEvent = {
 
 export type ExternalEvent = StartEvent;
 
-type ChangesInspectedEvent = {
+export type ChangesInspectedEvent = {
   readonly type: "changesInspected";
 };
 
-type MachineEvent = ExternalEvent | ChangesInspectedEvent;
+export type MachineEvent = ExternalEvent | ChangesInspectedEvent;
+export type MachineEventType = MachineEvent["type"];
 
 export type GeneratePlanJob = {
   readonly schemaVersion: 1;
@@ -73,9 +74,9 @@ export type GeneratePlanJob = {
 };
 
 export type RunPhase = "inspectingChanges" | "awaitingAgent";
-type MachinePhase = "idle" | RunPhase;
+export type MachinePhase = "idle" | RunPhase;
 
-type MachineSnapshot = {
+export type MachineSnapshot = {
   readonly runId: RunId;
   readonly phase: MachinePhase;
   readonly baseUrl: URL;
@@ -148,7 +149,7 @@ const allowedEvents = (
 ): readonly MachineEvent["type"][] =>
   Object.keys(TRANSITIONS[phase]) as MachineEvent["type"][];
 
-const step = (
+export const step = (
   snapshot: MachineSnapshot,
   event: MachineEvent,
 ): Either.Either<MachineSnapshot, InvalidTransitionError> => {
@@ -172,6 +173,12 @@ const step = (
     phase: nextPhase,
   });
 };
+
+type AutomaticPhase = keyof typeof AUTOMATIC_PHASES;
+
+const isAutomaticPhase = (
+  phase: MachinePhase,
+): phase is AutomaticPhase => phase in AUTOMATIC_PHASES;
 
 const recoveredSnapshot = (
   run: RunRecord,
@@ -212,8 +219,8 @@ const runAutomaticPhases = (
     let snapshot = initialSnapshot;
     let pendingJob: GeneratePlanJob | undefined;
 
-    while (snapshot.phase === "inspectingChanges") {
-      const work = AUTOMATIC_PHASES.inspectingChanges;
+    while (isAutomaticPhase(snapshot.phase)) {
+      const work = AUTOMATIC_PHASES[snapshot.phase];
       const result = yield* work.work(snapshot, changeInspector);
       const transition = step(snapshot, result.event);
       const next =
