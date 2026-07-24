@@ -10,9 +10,17 @@ const inspectGitStatus = (
   worktree: string,
 ): Effect.Effect<string, ChangeInspectionError> =>
   Effect.async<string, ChangeInspectionError>((resume) => {
-    execFile(
+    const child = execFile(
       "git",
-      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--",
+        ".",
+        ":(exclude).auto-qa",
+      ],
       { cwd: worktree, encoding: "utf8" },
       (error, stdout) => {
         resume(
@@ -27,16 +35,44 @@ const inspectGitStatus = (
         );
       },
     );
+    return Effect.sync(() => child.kill());
+  });
+
+export const findGitWorktree = (
+  directory: string,
+): Effect.Effect<string, ChangeInspectionError> =>
+  Effect.async<string, ChangeInspectionError>((resume) => {
+    const child = execFile(
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      { cwd: directory, encoding: "utf8" },
+      (error, stdout) => {
+        resume(
+          error === null
+            ? Effect.succeed(stdout.trim())
+            : Effect.fail(
+                new ChangeInspectionError(
+                  "Auto-QA must run inside a Git worktree",
+                  error,
+                ),
+              ),
+        );
+      },
+    );
+    return Effect.sync(() => child.kill());
   });
 
 const changeKind = (status: string): string => {
   if (status === "??") {
     return "added";
   }
+  if (status.includes("A")) {
+    return "added";
+  }
   if (status.includes("D")) {
     return "deleted";
   }
-  if (status.includes("R")) {
+  if (status.includes("R") || status.includes("C")) {
     return "renamed";
   }
   return "modified";
@@ -54,7 +90,7 @@ const parseStatus = (status: string): readonly Change[] => {
     const code = entry.slice(0, 2);
     const path = entry.slice(3);
     changes.push({ kind: changeKind(code), path });
-    if (code.includes("R")) {
+    if (code.includes("R") || code.includes("C")) {
       index += 1;
     }
   }

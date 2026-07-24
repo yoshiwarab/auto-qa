@@ -23,16 +23,18 @@ export const createWorkflowEngine = ({
   databasePath,
   changeInspector,
   turnOwnerFactory = makeTurnOwner,
+  readOnly = false,
 }: {
   readonly databasePath: string;
   readonly changeInspector: ChangeInspector;
   readonly turnOwnerFactory?: () => TurnOwner;
+  readonly readOnly?: boolean;
 }): Effect.Effect<
   WorkflowEngine,
   WorkflowStoreError,
   Scope.Scope
 > =>
-  Effect.map(openSqliteRunStore(databasePath), (runStore) =>
+  Effect.map(openSqliteRunStore(databasePath, { readOnly }), (runStore) =>
     makeWorkflowEngine({
       runStore,
       changeInspector,

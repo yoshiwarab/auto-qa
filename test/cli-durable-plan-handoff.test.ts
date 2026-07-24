@@ -70,11 +70,7 @@ const runCli = async (
   try {
     const result = await execFileAsync(
       process.execPath,
-      [
-        "--disable-warning=ExperimentalWarning",
-        cliPath,
-        ...args,
-      ],
+      [cliPath, ...args],
       { cwd: worktree },
     );
     return {
@@ -97,10 +93,10 @@ const runCli = async (
 };
 
 const parseOnlyJsonLine = (stdout: string): unknown => {
-  const lines = stdout
-    .split("\n")
-    .filter((line) => line.length > 0);
-  expect(lines).toHaveLength(1);
+  expect(stdout.endsWith("\n")).toBe(true);
+  const lines = stdout.split("\n");
+  expect(lines).toHaveLength(2);
+  expect(lines[1]).toBe("");
   return JSON.parse(lines[0] ?? "null") as unknown;
 };
 
@@ -216,6 +212,7 @@ describe("CLI durable generate-plan handoff", () => {
       schemaVersion: 1,
       type: "generate-plan",
       payload: {
+        baseUrl: baseUrl.href,
         changes: [
           {
             kind: "modified",

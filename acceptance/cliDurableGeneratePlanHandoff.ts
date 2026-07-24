@@ -129,11 +129,7 @@ const runCli = async (
   try {
     const result = await execFileAsync(
       process.execPath,
-      [
-        "--disable-warning=ExperimentalWarning",
-        join(process.cwd(), "dist", "src", "cli.js"),
-        ...args,
-      ],
+      [join(process.cwd(), "dist", "src", "cli.js"), ...args],
       { cwd: world.worktree },
     );
     return { exitCode: 0, ...result };
@@ -152,10 +148,11 @@ const runCli = async (
 };
 
 const envelope = (result: ProcessResult | undefined): Envelope => {
-  const lines = (result?.stdout ?? "")
-    .split("\n")
-    .filter((line) => line.length > 0);
-  expect(lines).toHaveLength(1);
+  const stdout = result?.stdout ?? "";
+  expect(stdout.endsWith("\n")).toBe(true);
+  const lines = stdout.split("\n");
+  expect(lines).toHaveLength(2);
+  expect(lines[1]).toBe("");
   return JSON.parse(lines[0] ?? "null") as Envelope;
 };
 
@@ -242,6 +239,7 @@ const handlers: readonly StepHandler<World>[] = [
         expect(world.startEnvelope?.result.job).toMatchObject({
           schemaVersion: 1,
           type: "generate-plan",
+          payload: { baseUrl: world.baseUrl.href },
         });
       }),
   },

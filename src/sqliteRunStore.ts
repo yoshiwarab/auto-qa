@@ -52,8 +52,12 @@ const decodePhase = (phase: string): RunPhase => {
 };
 
 export class SqliteRunStore implements RunStore {
-  constructor(private readonly database: DatabaseSync) {
-    this.database.exec(`
+  constructor(
+    private readonly database: DatabaseSync,
+    initialize = true,
+  ) {
+    if (initialize) {
+      this.database.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA foreign_keys = ON;
 
@@ -84,7 +88,8 @@ export class SqliteRunStore implements RunStore {
         process_started_at TEXT NOT NULL,
         ownership_token TEXT NOT NULL UNIQUE
       ) STRICT;
-    `);
+      `);
+    }
   }
 
   close(): void {
@@ -350,10 +355,17 @@ export class SqliteRunStore implements RunStore {
 
 export const openSqliteRunStore = (
   databasePath: string,
+  options: { readonly readOnly?: boolean } = {},
 ): Effect.Effect<RunStore, WorkflowStoreError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.try({
-      try: () => new SqliteRunStore(new DatabaseSync(databasePath)),
+      try: () =>
+        new SqliteRunStore(
+          new DatabaseSync(databasePath, {
+            readOnly: options.readOnly ?? false,
+          }),
+          !(options.readOnly ?? false),
+        ),
       catch: (cause) =>
         new WorkflowStoreError({
           operation: "open Run Store",
