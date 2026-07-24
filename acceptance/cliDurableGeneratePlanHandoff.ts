@@ -89,7 +89,6 @@ const makeWorld = Effect.acquireRelease(
       "Auto QA Harness",
     ]);
     await mkdir(join(worktree, "src"), { recursive: true });
-    await writeFile(join(worktree, ".gitignore"), ".auto-qa/\n");
     await writeFile(
       join(worktree, "src", "dashboard.tsx"),
       "export const dashboard = 'baseline';\n",
@@ -130,7 +129,7 @@ const runCli = async (
     const result = await execFileAsync(
       process.execPath,
       [join(process.cwd(), "dist", "src", "cli.js"), ...args],
-      { cwd: world.worktree },
+      { cwd: join(world.worktree, "src") },
     );
     return { exitCode: 0, ...result };
   } catch (cause) {

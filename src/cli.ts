@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Command } from "commander";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 import {
   findGitWorktree,
   makeGitChangeInspector,
@@ -38,18 +38,29 @@ type FailureEnvelope = {
   };
 };
 
+class CliBoundaryError extends Data.TaggedError("CliBoundaryError")<{
+  readonly operation: string;
+  readonly cause: unknown;
+}> {}
+
+type IdGenerator = () => string;
+
 const success = <Result>(
   result: Result,
+  correlationId: string,
 ): SuccessEnvelope<Result> => ({
   schemaVersion: 1,
-  correlationId: randomUUID(),
+  correlationId,
   ok: true,
   result,
 });
 
-const failure = (cause: unknown): FailureEnvelope => ({
+const failure = (
+  cause: unknown,
+  correlationId: string,
+): FailureEnvelope => ({
   schemaVersion: 1,
-  correlationId: randomUUID(),
+  correlationId,
   ok: false,
   error: {
     code:
@@ -97,23 +108,35 @@ const parseCommand = (argv: readonly string[]): CliCommand => {
 
 const runCommand = (
   command: CliCommand,
-): Effect.Effect<unknown, unknown> =>
+  makeId: IdGenerator,
+) =>
   Effect.scoped(
     Effect.gen(function* () {
       const worktree = yield* findGitWorktree(process.cwd());
       const stateDirectory = join(worktree, ".auto-qa");
       const isReadOnly = command.type !== "start";
       if (!isReadOnly) {
-        yield* Effect.tryPromise(() =>
-          mkdir(stateDirectory, { recursive: true }),
-        );
+        yield* Effect.tryPromise({
+          try: () => mkdir(stateDirectory, { recursive: true }),
+          catch: (cause) =>
+            new CliBoundaryError({
+              operation: "create state directory",
+              cause,
+            }),
+        });
       }
-      const emitWarning = process.emitWarning;
-      process.emitWarning = () => undefined;
-      const { createWorkflowEngine } = yield* Effect.promise(() =>
-        import("./nodeWorkflowEngine.js"),
+      const { createWorkflowEngine } = yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const emitWarning = process.emitWarning;
+          process.emitWarning = () => undefined;
+          return emitWarning;
+        }),
+        () => Effect.promise(() => import("./nodeWorkflowEngine.js")),
+        (emitWarning) =>
+          Effect.sync(() => {
+            process.emitWarning = emitWarning;
+          }),
       );
-      process.emitWarning = emitWarning;
       const engine = yield* createWorkflowEngine({
         databasePath: join(stateDirectory, "state.db"),
         changeInspector: makeGitChangeInspector(worktree),
@@ -121,19 +144,32 @@ const runCommand = (
       });
 
       if (command.type === "start") {
-        yield* Effect.tryPromise(() =>
-          fetch(new URL(command.baseUrl), { method: "HEAD" }),
-        );
-        const runId = RunId(randomUUID());
+        const baseUrl = yield* Effect.try({
+          try: () => new URL(command.baseUrl),
+          catch: (cause) =>
+            new CliBoundaryError({
+              operation: "parse Base URL",
+              cause,
+            }),
+        });
+        yield* Effect.tryPromise({
+          try: () => fetch(baseUrl, { method: "HEAD" }),
+          catch: (cause) =>
+            new CliBoundaryError({
+              operation: "reach Target Application",
+              cause,
+            }),
+        });
+        const runId = RunId(makeId());
         const result = yield* engine.dispatch(runId, {
           type: "start",
-          baseUrl: new URL(command.baseUrl),
+          baseUrl,
         });
         return success({
           runId,
           phase: result.phase,
           job: result.pendingJob,
-        });
+        }, makeId());
       }
 
       const runId = RunId(command.runId);
@@ -142,20 +178,24 @@ const runCommand = (
           engine.getStatus(runId),
           engine.getPendingJob(runId),
         ]);
-        return success({ phase: status.phase, job });
+        return success({ phase: status.phase, job }, makeId());
       }
 
       const status = yield* engine.getStatus(runId);
-      return success({ phase: status.phase });
+      return success({ phase: status.phase }, makeId());
     }),
   );
 
 try {
   const command = parseCommand(process.argv);
-  const envelope = await Effect.runPromise(runCommand(command));
+  const envelope = await Effect.runPromise(
+    runCommand(command, randomUUID),
+  );
   process.stdout.write(`${JSON.stringify(envelope)}\n`);
 } catch (cause) {
-  process.stdout.write(`${JSON.stringify(failure(cause))}\n`);
+  process.stdout.write(
+    `${JSON.stringify(failure(cause, randomUUID()))}\n`,
+  );
   process.exitCode =
     typeof cause === "object" &&
     cause !== null &&

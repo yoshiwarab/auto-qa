@@ -38,11 +38,6 @@ const makeTemporaryGitWorktree = async (): Promise<string> => {
   );
   await mkdir(join(worktree, "src"), { recursive: true });
   await writeFile(
-    join(worktree, ".gitignore"),
-    ".auto-qa/\n",
-    "utf8",
-  );
-  await writeFile(
     join(worktree, "src", "dashboard.tsx"),
     "export const dashboard = 'baseline';\n",
     "utf8",
@@ -71,7 +66,7 @@ const runCli = async (
     const result = await execFileAsync(
       process.execPath,
       [cliPath, ...args],
-      { cwd: worktree },
+      { cwd: join(worktree, "src") },
     );
     return {
       exitCode: 0,
