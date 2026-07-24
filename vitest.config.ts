@@ -2,6 +2,16 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    coverage: {
+      exclude: [
+        "src/cli.ts",
+        "src/cliApplication.ts",
+        "src/gitChangeInspector.ts",
+      ],
+      include: ["src/**/*.ts"],
+      reporter: ["text"],
+      reportsDirectory: "build/coverage",
+    },
     exclude: [
       ".worktrees/**",
       "build/**",
