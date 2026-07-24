@@ -1,6 +1,12 @@
 import { execFile } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -94,6 +100,12 @@ const parseOnlyJsonLine = (stdout: string): unknown => {
   expect(lines[1]).toBe("");
   return JSON.parse(lines[0] ?? "null") as unknown;
 };
+
+const pathExists = (path: string): Promise<boolean> =>
+  access(path).then(
+    () => true,
+    () => false,
+  );
 
 beforeAll(async () => {
   await execFileAsync(
@@ -219,5 +231,50 @@ describe("CLI durable generate-plan handoff", () => {
     expect(startEnvelope.result.phase).toBe("awaitingAgent");
     expect(jobEnvelope.result.phase).toBe("awaitingAgent");
     expect(statusEnvelope.result.phase).toBe("awaitingAgent");
+  });
+
+  test("usage failures preserve Commander error codes", async () => {
+    const worktree = await makeTemporaryGitWorktree();
+    const result = await runCli(worktree, ["start"]);
+    const envelope = parseOnlyJsonLine(result.stdout);
+
+    expect(result).toMatchObject({
+      exitCode: 2,
+      stderr: "",
+    });
+    expect(envelope).toMatchObject({
+      schemaVersion: 1,
+      ok: false,
+      correlationId: expect.any(String),
+      error: {
+        code: "commander.missingMandatoryOptionValue",
+      },
+    });
+  });
+
+  test("read-only failures preserve domain codes without creating state", async () => {
+    const worktree = await makeTemporaryGitWorktree();
+    const result = await runCli(worktree, [
+      "status",
+      "missing-run",
+    ]);
+    const envelope = parseOnlyJsonLine(result.stdout);
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      stderr: "",
+    });
+    expect(envelope).toMatchObject({
+      schemaVersion: 1,
+      ok: false,
+      correlationId: expect.any(String),
+      error: {
+        code: "WorkflowStoreError",
+        message: "Auto-QA failed during open Run Store",
+      },
+    });
+    await expect(
+      pathExists(join(worktree, ".auto-qa")),
+    ).resolves.toBe(false);
   });
 });

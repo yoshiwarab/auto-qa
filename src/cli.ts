@@ -42,10 +42,20 @@ const parseCommand = (argv: readonly string[]): CliCommand => {
 
 try {
   const command = parseCommand(process.argv);
-  const envelope = await Effect.runPromise(
-    runCliCommand(command, process.cwd(), randomUUID),
+  const outcome = await Effect.runPromise(
+    Effect.either(
+      runCliCommand(command, process.cwd(), randomUUID),
+    ),
   );
-  process.stdout.write(`${JSON.stringify(envelope)}\n`);
+  if (outcome._tag === "Left") {
+    const failure = cliFailure(outcome.left, randomUUID());
+    process.stdout.write(
+      `${JSON.stringify(failure.envelope)}\n`,
+    );
+    process.exitCode = failure.exitCode;
+  } else {
+    process.stdout.write(`${JSON.stringify(outcome.right)}\n`);
+  }
 } catch (cause) {
   const failure = cliFailure(cause, randomUUID());
   process.stdout.write(

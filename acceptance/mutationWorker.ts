@@ -41,7 +41,10 @@ const durationMilliseconds = (duration: string): number | undefined => {
   return undefined;
 };
 
-const runMutation = (job: MutationJob): Promise<MutationResponse> => {
+const runMutation = (
+  job: MutationJob,
+  featureStem: string,
+): Promise<MutationResponse> => {
   const startedAt = process.hrtime.bigint();
   const projectRoot = process.cwd();
   const vitestEntrypoint = resolve(
@@ -61,7 +64,11 @@ const runMutation = (job: MutationJob): Promise<MutationResponse> => {
         "run",
         "--config",
         vitestConfig,
-        resolve(projectRoot, job.generated_dir),
+        resolve(
+          projectRoot,
+          job.generated_dir,
+          `${featureStem}.acceptance.test.ts`,
+        ),
       ],
       {
         cwd: projectRoot,
@@ -146,6 +153,15 @@ const writeResponse = (response: MutationResponse): void => {
 };
 
 const main = async (): Promise<void> => {
+  const featureStem = process.argv[2];
+  if (featureStem === undefined) {
+    process.stderr.write(
+      "Usage: acceptance-mutation-worker <feature-stem>\n",
+    );
+    process.exitCode = 2;
+    return;
+  }
+
   const lines = createInterface({
     input: process.stdin,
     crlfDelay: Infinity,
@@ -157,7 +173,9 @@ const main = async (): Promise<void> => {
     }
 
     try {
-      writeResponse(await runMutation(parseJob(line)));
+      writeResponse(
+        await runMutation(parseJob(line), featureStem),
+      );
     } catch (cause) {
       const id = (() => {
         try {
