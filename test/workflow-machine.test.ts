@@ -18,10 +18,6 @@ import {
 } from "vitest";
 
 const phases = Object.keys(TRANSITIONS) as MachinePhase[];
-const eventTypes: readonly MachineEventType[] = [
-  "start",
-  "changesInspected",
-];
 
 let targetApplication: Server;
 let baseUrl: URL;
@@ -49,10 +45,19 @@ afterAll(async () => {
   });
 });
 
+const eventFixtures = {
+  start: (): MachineEvent => ({ type: "start", baseUrl }),
+  changesInspected: (): MachineEvent => ({
+    type: "changesInspected",
+  }),
+} satisfies Record<MachineEventType, () => MachineEvent>;
+
+const eventTypes = Object.keys(
+  eventFixtures,
+) as MachineEventType[];
+
 const eventFor = (eventType: MachineEventType): MachineEvent =>
-  eventType === "start"
-    ? { type: "start", baseUrl }
-    : { type: "changesInspected" };
+  eventFixtures[eventType]();
 
 describe("Workflow machine Phase × Event coverage", () => {
   for (const phase of phases) {
