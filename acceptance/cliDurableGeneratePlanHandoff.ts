@@ -163,6 +163,15 @@ const envelope = (result: ProcessResult | undefined): Envelope => {
   return JSON.parse(lines[0] ?? "null") as Envelope;
 };
 
+const startRun = async (world: World): Promise<void> => {
+  world.start = await runCli(world, [
+    "start",
+    "--base-url",
+    world.baseUrl.href,
+  ]);
+  world.startEnvelope = envelope(world.start);
+};
+
 const handlers: readonly StepHandler<World>[] = [
   {
     pattern:
@@ -184,15 +193,7 @@ const handlers: readonly StepHandler<World>[] = [
   {
     pattern:
       /^a fresh CLI process starts a Run with a harness-supplied Base URL$/,
-    run: (world) =>
-      Effect.tryPromise(async () => {
-        world.start = await runCli(world, [
-          "start",
-          "--base-url",
-          world.baseUrl.href,
-        ]);
-        world.startEnvelope = envelope(world.start);
-      }),
+    run: (world) => Effect.tryPromise(() => startRun(world)),
   },
   {
     pattern:
@@ -281,15 +282,7 @@ const handlers: readonly StepHandler<World>[] = [
   {
     pattern:
       /^a fresh CLI process starts the first Run with a harness-supplied Base URL$/,
-    run: (world) =>
-      Effect.tryPromise(async () => {
-        world.start = await runCli(world, [
-          "start",
-          "--base-url",
-          world.baseUrl.href,
-        ]);
-        world.startEnvelope = envelope(world.start);
-      }),
+    run: (world) => Effect.tryPromise(() => startRun(world)),
   },
   {
     pattern:

@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Data, Effect } from "effect";
+import { cliSuccess } from "./cliProtocol.js";
 import {
   findGitWorktree,
   makeGitChangeInspector,
@@ -17,103 +18,12 @@ export type CliCommand =
       readonly runId: string;
     };
 
-type SuccessEnvelope<Result> = {
-  readonly schemaVersion: 1;
-  readonly correlationId: string;
-  readonly ok: true;
-  readonly result: Result;
-};
-
-type FailureEnvelope = {
-  readonly schemaVersion: 1;
-  readonly correlationId: string;
-  readonly ok: false;
-  readonly error: {
-    readonly code: string;
-    readonly message: string;
-    readonly details?: {
-      readonly activeRunId: string;
-    };
-  };
-};
-
 class CliBoundaryError extends Data.TaggedError("CliBoundaryError")<{
   readonly operation: string;
   readonly cause: unknown;
 }> {}
 
 type IdGenerator = () => string;
-
-const success = <Result>(
-  result: Result,
-  correlationId: string,
-): SuccessEnvelope<Result> => ({
-  schemaVersion: 1,
-  correlationId,
-  ok: true,
-  result,
-});
-
-const failureMessage = (cause: unknown): string => {
-  if (cause instanceof Error && cause.message.trim() !== "") {
-    return cause.message;
-  }
-  if (
-    typeof cause === "object" &&
-    cause !== null &&
-    "operation" in cause &&
-    typeof cause.operation === "string"
-  ) {
-    return `Auto-QA failed during ${cause.operation}`;
-  }
-  return "Auto-QA command failed";
-};
-
-const failureCode = (cause: unknown): string => {
-  if (typeof cause !== "object" || cause === null) {
-    return "CLI_ERROR";
-  }
-  if ("_tag" in cause && typeof cause._tag === "string") {
-    return cause._tag;
-  }
-  if ("code" in cause && typeof cause.code === "string") {
-    return cause.code;
-  }
-  return "CLI_ERROR";
-};
-
-export const cliFailure = (
-  cause: unknown,
-  correlationId: string,
-): {
-  readonly envelope: FailureEnvelope;
-  readonly exitCode: number;
-} => {
-  const code = failureCode(cause);
-  const activeRunId =
-    code === "ActiveRunExistsError" &&
-    typeof cause === "object" &&
-    cause !== null &&
-    "activeRunId" in cause &&
-    typeof cause.activeRunId === "string"
-      ? cause.activeRunId
-      : undefined;
-  return {
-    envelope: {
-      schemaVersion: 1,
-      correlationId,
-      ok: false,
-      error: {
-        code,
-        message: failureMessage(cause),
-        ...(activeRunId === undefined
-          ? {}
-          : { details: { activeRunId } }),
-      },
-    },
-    exitCode: code.startsWith("commander.") ? 2 : 1,
-  };
-};
 
 export const runCliCommand = (
   command: CliCommand,
@@ -176,7 +86,7 @@ export const runCliCommand = (
           type: "start",
           baseUrl,
         });
-        return success({
+        return cliSuccess({
           runId,
           phase: result.phase,
           job: result.pendingJob,
@@ -189,10 +99,10 @@ export const runCliCommand = (
           engine.getStatus(runId),
           engine.getPendingJob(runId),
         ]);
-        return success({ phase: status.phase, job }, makeId());
+        return cliSuccess({ phase: status.phase, job }, makeId());
       }
 
       const status = yield* engine.getStatus(runId);
-      return success({ phase: status.phase }, makeId());
+      return cliSuccess({ phase: status.phase }, makeId());
     }),
   );

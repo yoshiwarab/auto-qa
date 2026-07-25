@@ -4,10 +4,10 @@ import { randomUUID } from "node:crypto";
 import { Command } from "commander";
 import { Effect } from "effect";
 import {
-  cliFailure,
   runCliCommand,
   type CliCommand,
 } from "./cliApplication.js";
+import { cliFailure } from "./cliProtocol.js";
 
 const parseCommand = (argv: readonly string[]): CliCommand => {
   let command: CliCommand | undefined;
