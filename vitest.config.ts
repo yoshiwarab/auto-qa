@@ -6,7 +6,6 @@ export default defineConfig({
       exclude: [
         "src/cli.ts",
         "src/cliApplication.ts",
-        "src/cliProtocol.ts",
         "src/gitChangeInspector.ts",
       ],
       include: ["src/**/*.ts"],
@@ -14,7 +13,6 @@ export default defineConfig({
       reportsDirectory: "build/coverage",
     },
     exclude: [
-      ".repos/**",
       ".worktrees/**",
       "build/**",
       "dist/**",

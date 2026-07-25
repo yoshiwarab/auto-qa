@@ -18,7 +18,9 @@ mkdir -p "build/acceptance/ir" "$generated"
 node "$project_root/node_modules/typescript/bin/tsc" \
   --project "$project_root/tsconfig.build.json"
 
-for stem in durable-generate-plan-handoff cli-durable-generate-plan-handoff; do
+for stem in durable-generate-plan-handoff \
+  cli-durable-generate-plan-handoff \
+  cli-one-active-run-per-worktree; do
   feature="features/$stem.feature"
   ir="build/acceptance/ir/$stem.json"
   bb --config "$aps_root/bb.edn" gherkin-parser "$feature" "$ir"

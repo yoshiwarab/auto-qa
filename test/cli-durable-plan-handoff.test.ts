@@ -309,6 +309,7 @@ describe("CLI durable generate-plan handoff", () => {
       ok: false,
       error: {
         code: "ActiveRunExistsError",
+        message: `Run ${firstEnvelope.result.runId} is already active in this worktree`,
         details: {
           activeRunId: firstEnvelope.result.runId,
         },

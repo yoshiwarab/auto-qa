@@ -28,9 +28,23 @@ export const cliSuccess = <Result>(
   result,
 });
 
+const activeRunIdFrom = (cause: unknown): string | undefined =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "_tag" in cause &&
+  cause._tag === "ActiveRunExistsError" &&
+  "activeRunId" in cause &&
+  typeof cause.activeRunId === "string"
+    ? cause.activeRunId
+    : undefined;
+
 const failureMessage = (cause: unknown): string => {
   if (cause instanceof Error && cause.message.trim() !== "") {
     return cause.message;
+  }
+  const activeRunId = activeRunIdFrom(cause);
+  if (activeRunId !== undefined) {
+    return `Run ${activeRunId} is already active in this worktree`;
   }
   if (
     typeof cause === "object" &&
@@ -64,14 +78,7 @@ export const cliFailure = (
   readonly exitCode: number;
 } => {
   const code = failureCode(cause);
-  const activeRunId =
-    code === "ActiveRunExistsError" &&
-    typeof cause === "object" &&
-    cause !== null &&
-    "activeRunId" in cause &&
-    typeof cause.activeRunId === "string"
-      ? cause.activeRunId
-      : undefined;
+  const activeRunId = activeRunIdFrom(cause);
   return {
     envelope: {
       schemaVersion: 1,
