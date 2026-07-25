@@ -26,7 +26,7 @@ export const generateDurablePlanEntrypoint = async (
   );
   const featurePath = normalizePath(join("features", `${stem}.feature`));
   const binding =
-    stem === "cli-durable-generate-plan-handoff"
+    stem.startsWith("cli-")
       ? {
           module: "cliDurableGeneratePlanHandoff",
           name: "cliDurableGeneratePlanHandoff",

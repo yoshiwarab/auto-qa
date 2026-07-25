@@ -277,4 +277,50 @@ describe("CLI durable generate-plan handoff", () => {
       pathExists(join(worktree, ".auto-qa")),
     ).resolves.toBe(false);
   });
+
+  test("a second start identifies the active Run without replacing it", async () => {
+    const worktree = await makeTemporaryGitWorktree();
+    const first = await runCli(worktree, [
+      "start",
+      "--base-url",
+      baseUrl.href,
+    ]);
+    const firstEnvelope = parseOnlyJsonLine(first.stdout) as {
+      readonly result: { readonly runId: string };
+    };
+
+    const second = await runCli(worktree, [
+      "start",
+      "--base-url",
+      baseUrl.href,
+    ]);
+    const secondEnvelope = parseOnlyJsonLine(second.stdout);
+    const status = await runCli(worktree, [
+      "status",
+      firstEnvelope.result.runId,
+    ]);
+    const statusEnvelope = parseOnlyJsonLine(status.stdout);
+
+    expect(first).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(second).toMatchObject({ exitCode: 1, stderr: "" });
+    expect(secondEnvelope).toMatchObject({
+      schemaVersion: 1,
+      correlationId: expect.any(String),
+      ok: false,
+      error: {
+        code: "ActiveRunExistsError",
+        details: {
+          activeRunId: firstEnvelope.result.runId,
+        },
+      },
+    });
+    expect(status).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(statusEnvelope).toMatchObject({
+      schemaVersion: 1,
+      ok: true,
+      result: {
+        phase: "awaitingAgent",
+      },
+    });
+  });
 });

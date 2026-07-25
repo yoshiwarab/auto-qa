@@ -28,10 +28,16 @@ type Envelope = {
   readonly schemaVersion: number;
   readonly correlationId: string;
   readonly ok: boolean;
-  readonly result: {
+  readonly result?: {
     readonly runId?: string;
     readonly phase: string;
     readonly job?: unknown;
+  };
+  readonly error?: {
+    readonly code: string;
+    readonly details?: {
+      readonly activeRunId: string;
+    };
   };
 };
 
@@ -40,9 +46,11 @@ type World = {
   readonly baseUrl: URL;
   changedPath?: string;
   start?: ProcessResult;
+  secondStart?: ProcessResult;
   job?: ProcessResult;
   status?: ProcessResult;
   startEnvelope?: Envelope;
+  secondStartEnvelope?: Envelope;
   jobEnvelope?: Envelope;
   statusEnvelope?: Envelope;
 };
@@ -191,7 +199,7 @@ const handlers: readonly StepHandler<World>[] = [
       /^separate fresh CLI processes invoke the job and status commands for the returned Run$/,
     run: (world) =>
       Effect.tryPromise(async () => {
-        const runId = world.startEnvelope?.result.runId;
+        const runId = world.startEnvelope?.result?.runId;
         if (runId === undefined) throw new Error("Missing Run id");
         world.job = await runCli(world, ["job", runId]);
         world.status = await runCli(world, ["status", runId]);
@@ -232,10 +240,10 @@ const handlers: readonly StepHandler<World>[] = [
       /^the start and Job envelopes contain the same schema-version 1 generate-plan Job$/,
     run: (world) =>
       Effect.sync(() => {
-        expect(world.jobEnvelope?.result.job).toEqual(
-          world.startEnvelope?.result.job,
+        expect(world.jobEnvelope?.result?.job).toEqual(
+          world.startEnvelope?.result?.job,
         );
-        expect(world.startEnvelope?.result.job).toMatchObject({
+        expect(world.startEnvelope?.result?.job).toMatchObject({
           schemaVersion: 1,
           type: "generate-plan",
           payload: { baseUrl: world.baseUrl.href },
@@ -247,7 +255,7 @@ const handlers: readonly StepHandler<World>[] = [
       /^the generate-plan Job contains a <([A-Za-z0-9_]+)> change at <([A-Za-z0-9_]+)>$/,
     run: (world, example, captures) =>
       Effect.sync(() => {
-        expect(world.startEnvelope?.result.job).toMatchObject({
+        expect(world.startEnvelope?.result?.job).toMatchObject({
           payload: {
             changes: [
               {
@@ -264,9 +272,108 @@ const handlers: readonly StepHandler<World>[] = [
       /^the start and status envelopes report phase awaitingAgent$/,
     run: (world) =>
       Effect.sync(() => {
-        expect(world.startEnvelope?.result.phase).toBe("awaitingAgent");
-        expect(world.statusEnvelope?.result.phase).toBe(
+        expect(world.startEnvelope?.result?.phase).toBe("awaitingAgent");
+        expect(world.statusEnvelope?.result?.phase).toBe(
           "awaitingAgent",
+        );
+      }),
+  },
+  {
+    pattern:
+      /^a fresh CLI process starts the first Run with a harness-supplied Base URL$/,
+    run: (world) =>
+      Effect.tryPromise(async () => {
+        world.start = await runCli(world, [
+          "start",
+          "--base-url",
+          world.baseUrl.href,
+        ]);
+        world.startEnvelope = envelope(world.start);
+      }),
+  },
+  {
+    pattern:
+      /^another fresh CLI process attempts to start a second Run in the same worktree with the same Base URL$/,
+    run: (world) =>
+      Effect.tryPromise(async () => {
+        world.secondStart = await runCli(world, [
+          "start",
+          "--base-url",
+          world.baseUrl.href,
+        ]);
+        world.secondStartEnvelope = envelope(world.secondStart);
+      }),
+  },
+  {
+    pattern: /^the first process exits successfully with empty stderr$/,
+    run: (world) =>
+      Effect.sync(() => {
+        expect(world.start).toMatchObject({
+          exitCode: 0,
+          stderr: "",
+        });
+      }),
+  },
+  {
+    pattern:
+      /^the second process exits with code <([A-Za-z0-9_]+)> and empty stderr$/,
+    run: (world, example, captures) =>
+      Effect.sync(() => {
+        expect(world.secondStart).toMatchObject({
+          exitCode: Number(exampleValue(example, captures[0])),
+          stderr: "",
+        });
+      }),
+  },
+  {
+    pattern:
+      /^the second stdout contains exactly one schema-version 1 JSON failure envelope with a correlation id$/,
+    run: (world) =>
+      Effect.sync(() => {
+        expect(world.secondStartEnvelope).toMatchObject({
+          schemaVersion: 1,
+          correlationId: expect.any(String),
+          ok: false,
+        });
+        expect(
+          world.secondStartEnvelope?.correlationId.length,
+        ).toBeGreaterThan(0);
+      }),
+  },
+  {
+    pattern: /^the failure code is <([A-Za-z0-9_]+)>$/,
+    run: (world, example, captures) =>
+      Effect.sync(() => {
+        expect(world.secondStartEnvelope?.error?.code).toBe(
+          exampleValue(example, captures[0]),
+        );
+      }),
+  },
+  {
+    pattern:
+      /^the failure identifies the first Run by its returned Run id$/,
+    run: (world) =>
+      Effect.sync(() => {
+        expect(
+          world.secondStartEnvelope?.error?.details?.activeRunId,
+        ).toBe(world.startEnvelope?.result?.runId);
+      }),
+  },
+  {
+    pattern:
+      /^a fresh status process reports the first Run in phase <([A-Za-z0-9_]+)>$/,
+    run: (world, example, captures) =>
+      Effect.tryPromise(async () => {
+        const runId = world.startEnvelope?.result?.runId;
+        if (runId === undefined) throw new Error("Missing Run id");
+        world.status = await runCli(world, ["status", runId]);
+        world.statusEnvelope = envelope(world.status);
+        expect(world.status).toMatchObject({
+          exitCode: 0,
+          stderr: "",
+        });
+        expect(world.statusEnvelope?.result?.phase).toBe(
+          exampleValue(example, captures[0]),
         );
       }),
   },

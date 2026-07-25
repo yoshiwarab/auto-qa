@@ -31,6 +31,9 @@ type FailureEnvelope = {
   readonly error: {
     readonly code: string;
     readonly message: string;
+    readonly details?: {
+      readonly activeRunId: string;
+    };
   };
 };
 
@@ -87,6 +90,14 @@ export const cliFailure = (
   readonly exitCode: number;
 } => {
   const code = failureCode(cause);
+  const activeRunId =
+    code === "ActiveRunExistsError" &&
+    typeof cause === "object" &&
+    cause !== null &&
+    "activeRunId" in cause &&
+    typeof cause.activeRunId === "string"
+      ? cause.activeRunId
+      : undefined;
   return {
     envelope: {
       schemaVersion: 1,
@@ -95,6 +106,9 @@ export const cliFailure = (
       error: {
         code,
         message: failureMessage(cause),
+        ...(activeRunId === undefined
+          ? {}
+          : { details: { activeRunId } }),
       },
     },
     exitCode: code.startsWith("commander.") ? 2 : 1,

@@ -16,7 +16,9 @@ mkdir -p "$project_root/build/acceptance/ir" \
 node "$project_root/node_modules/typescript/bin/tsc" \
   --project "$project_root/tsconfig.build.json"
 
-for stem in durable-generate-plan-handoff cli-durable-generate-plan-handoff; do
+for stem in durable-generate-plan-handoff \
+  cli-durable-generate-plan-handoff \
+  cli-one-active-run-per-worktree; do
   feature="$project_root/features/$stem.feature"
   ir="$project_root/build/acceptance/ir/$stem.json"
   dry_report="$project_root/build/acceptance/dry/$stem.json"
