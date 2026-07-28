@@ -317,12 +317,53 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
       expect(concurrent._tag).toBe("Left");
       if (concurrent._tag === "Left") {
         expect(concurrent.left).toBeInstanceOf(RunBusyError);
+        expect(concurrent.left).toMatchObject({
+          owningRunId: "run-lock-owner",
+        });
       }
+
+      const observation = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector: {
+                inspect: () => Effect.succeed([]),
+              },
+              readOnly: true,
+            });
+            return {
+              status: yield* engine.getStatus(
+                RunId("run-lock-owner"),
+              ),
+              job: yield* engine.getPendingJob(
+                RunId("run-lock-owner"),
+              ),
+            };
+          }),
+        ),
+      );
+      expect(observation).toEqual({
+        status: {
+          runId: "run-lock-owner",
+          phase: "inspectingChanges",
+        },
+        job: null,
+      });
 
       releaseInspection?.([
         { kind: "modified", path: "src/dashboard.tsx" },
       ]);
-      await Effect.runPromise(Fiber.join(firstDispatch));
+      const completed = await Effect.runPromise(
+        Fiber.join(firstDispatch),
+      );
+      expect(completed).toMatchObject({
+        phase: "awaitingAgent",
+        pendingJob: {
+          schemaVersion: 1,
+          type: "generate-plan",
+        },
+      });
 
       const afterRelease = await Effect.runPromise(
         Effect.either(

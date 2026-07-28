@@ -26,7 +26,12 @@ export const generateDurablePlanEntrypoint = async (
   );
   const featurePath = normalizePath(join("features", `${stem}.feature`));
   const binding =
-    stem.startsWith("cli-")
+    stem === "workflow-engine-fenced-turn"
+      ? {
+          module: "workflowFencedTurn",
+          name: "workflowFencedTurn",
+        }
+      : stem.startsWith("cli-")
       ? {
           module: "cliDurableGeneratePlanHandoff",
           name: "cliDurableGeneratePlanHandoff",
