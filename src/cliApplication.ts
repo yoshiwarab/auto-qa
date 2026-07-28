@@ -16,6 +16,11 @@ export type CliCommand =
   | {
       readonly type: "job" | "status";
       readonly runId: string;
+    }
+  | {
+      readonly type: "abandon";
+      readonly runId: string;
+      readonly reason: string;
     };
 
 class CliBoundaryError extends Data.TaggedError("CliBoundaryError")<{
@@ -34,7 +39,8 @@ export const runCliCommand = (
     Effect.gen(function* () {
       const worktree = yield* findGitWorktree(currentDirectory);
       const stateDirectory = join(worktree, ".auto-qa");
-      const isReadOnly = command.type !== "start";
+      const isReadOnly =
+        command.type === "job" || command.type === "status";
       if (!isReadOnly) {
         yield* Effect.tryPromise({
           try: () => mkdir(stateDirectory, { recursive: true }),
@@ -94,6 +100,10 @@ export const runCliCommand = (
       }
 
       const runId = RunId(command.runId);
+      if (command.type === "abandon") {
+        const status = yield* engine.abandon(runId, command.reason);
+        return cliSuccess(status, makeId());
+      }
       if (command.type === "job") {
         const [status, job] = yield* Effect.all([
           engine.getStatus(runId),
@@ -103,6 +113,11 @@ export const runCliCommand = (
       }
 
       const status = yield* engine.getStatus(runId);
-      return cliSuccess({ phase: status.phase }, makeId());
+      return cliSuccess({
+        phase: status.phase,
+        ...(status.reason === undefined
+          ? {}
+          : { reason: status.reason }),
+      }, makeId());
     }),
   );

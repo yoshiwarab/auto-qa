@@ -324,4 +324,69 @@ describe("CLI durable generate-plan handoff", () => {
       },
     });
   });
+
+  test("abandon releases the worktree for a new Run", async () => {
+    const worktree = await makeTemporaryGitWorktree();
+    const first = await runCli(worktree, [
+      "start",
+      "--base-url",
+      baseUrl.href,
+    ]);
+    const firstEnvelope = parseOnlyJsonLine(first.stdout) as {
+      readonly result: { readonly runId: string };
+    };
+    const reason = "superseded by updated changes";
+
+    const abandon = await runCli(worktree, [
+      "runs",
+      "abandon",
+      firstEnvelope.result.runId,
+      "--reason",
+      reason,
+    ]);
+    const abandonEnvelope = parseOnlyJsonLine(abandon.stdout);
+    const status = await runCli(worktree, [
+      "status",
+      firstEnvelope.result.runId,
+    ]);
+    const statusEnvelope = parseOnlyJsonLine(status.stdout);
+    const next = await runCli(worktree, [
+      "start",
+      "--base-url",
+      baseUrl.href,
+    ]);
+    const nextEnvelope = parseOnlyJsonLine(next.stdout) as {
+      readonly result: {
+        readonly runId: string;
+        readonly phase: string;
+      };
+    };
+
+    for (const result of [abandon, status, next]) {
+      expect(result).toMatchObject({ exitCode: 0, stderr: "" });
+    }
+    for (const envelope of [
+      abandonEnvelope,
+      statusEnvelope,
+      nextEnvelope,
+    ]) {
+      expect(envelope).toMatchObject({
+        schemaVersion: 1,
+        correlationId: expect.any(String),
+        ok: true,
+      });
+    }
+    expect(abandonEnvelope).toMatchObject({
+      result: { phase: "abandoned", reason },
+    });
+    expect(statusEnvelope).toMatchObject({
+      result: { phase: "abandoned", reason },
+    });
+    expect(nextEnvelope.result).toMatchObject({
+      phase: "awaitingAgent",
+    });
+    expect(nextEnvelope.result.runId).not.toBe(
+      firstEnvelope.result.runId,
+    );
+  });
 });

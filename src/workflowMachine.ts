@@ -22,7 +22,10 @@ export type ChangesInspectedEvent = {
 export type MachineEvent = ExternalEvent | ChangesInspectedEvent;
 export type MachineEventType = MachineEvent["type"];
 
-export type RunPhase = "inspectingChanges" | "awaitingAgent";
+export type RunPhase =
+  | "inspectingChanges"
+  | "awaitingAgent"
+  | "abandoned";
 export type MachinePhase = "idle" | RunPhase;
 
 export type MachineSnapshot = {
@@ -47,6 +50,7 @@ export const TRANSITIONS = {
     changesInspected: "awaitingAgent",
   },
   awaitingAgent: {},
+  abandoned: {},
 } as const satisfies Record<
   MachinePhase,
   Partial<Record<MachineEvent["type"], MachinePhase>>

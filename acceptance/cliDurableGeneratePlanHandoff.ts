@@ -32,6 +32,7 @@ type Envelope = {
     readonly runId?: string;
     readonly phase: string;
     readonly job?: unknown;
+    readonly reason?: string;
   };
   readonly error?: {
     readonly code: string;
@@ -49,10 +50,14 @@ type World = {
   secondStart?: ProcessResult;
   job?: ProcessResult;
   status?: ProcessResult;
+  abandon?: ProcessResult;
+  newStart?: ProcessResult;
   startEnvelope?: Envelope;
   secondStartEnvelope?: Envelope;
   jobEnvelope?: Envelope;
   statusEnvelope?: Envelope;
+  abandonEnvelope?: Envelope;
+  newStartEnvelope?: Envelope;
 };
 
 const runGit = (
@@ -222,11 +227,19 @@ const handlers: readonly StepHandler<World>[] = [
       /^each stdout contains exactly one schema-version 1 JSON success envelope with a correlation id$/,
     run: (world) =>
       Effect.sync(() => {
-        for (const value of [
-          world.startEnvelope,
-          world.jobEnvelope,
-          world.statusEnvelope,
-        ]) {
+        const values =
+          world.abandonEnvelope === undefined
+            ? [
+                world.startEnvelope,
+                world.jobEnvelope,
+                world.statusEnvelope,
+              ]
+            : [
+                world.abandonEnvelope,
+                world.statusEnvelope,
+                world.newStartEnvelope,
+              ];
+        for (const value of values) {
           expect(value).toMatchObject({
             schemaVersion: 1,
             correlationId: expect.any(String),
@@ -367,6 +380,90 @@ const handlers: readonly StepHandler<World>[] = [
         });
         expect(world.statusEnvelope?.result?.phase).toBe(
           exampleValue(example, captures[0]),
+        );
+      }),
+  },
+  {
+    pattern:
+      /^a fresh CLI process has started the first Run with a harness-supplied Base URL$/,
+    run: (world) => Effect.tryPromise(() => startRun(world)),
+  },
+  {
+    pattern:
+      /^another fresh CLI process invokes runs abandon for the first Run with reason <([A-Za-z0-9_]+)>$/,
+    run: (world, example, captures) =>
+      Effect.tryPromise(async () => {
+        const runId = world.startEnvelope?.result?.runId;
+        if (runId === undefined) throw new Error("Missing Run id");
+        world.abandon = await runCli(world, [
+          "runs",
+          "abandon",
+          runId,
+          "--reason",
+          exampleValue(example, captures[0]),
+        ]);
+        world.abandonEnvelope = envelope(world.abandon);
+      }),
+  },
+  {
+    pattern: /^a fresh status process reads the first Run$/,
+    run: (world) =>
+      Effect.tryPromise(async () => {
+        const runId = world.startEnvelope?.result?.runId;
+        if (runId === undefined) throw new Error("Missing Run id");
+        world.status = await runCli(world, ["status", runId]);
+        world.statusEnvelope = envelope(world.status);
+      }),
+  },
+  {
+    pattern:
+      /^a fresh CLI process starts another Run in the same worktree with the same Base URL$/,
+    run: (world) =>
+      Effect.tryPromise(async () => {
+        world.newStart = await runCli(world, [
+          "start",
+          "--base-url",
+          world.baseUrl.href,
+        ]);
+        world.newStartEnvelope = envelope(world.newStart);
+      }),
+  },
+  {
+    pattern:
+      /^the abandon, status, and new start processes each exit successfully with empty stderr$/,
+    run: (world) =>
+      Effect.sync(() => {
+        for (const result of [
+          world.abandon,
+          world.status,
+          world.newStart,
+        ]) {
+          expect(result).toMatchObject({ exitCode: 0, stderr: "" });
+        }
+      }),
+  },
+  {
+    pattern:
+      /^the status envelope reports the first Run in phase <([A-Za-z0-9_]+)> with reason <([A-Za-z0-9_]+)>$/,
+    run: (world, example, captures) =>
+      Effect.sync(() => {
+        expect(world.statusEnvelope?.result).toMatchObject({
+          phase: exampleValue(example, captures[0]),
+          reason: exampleValue(example, captures[1]),
+        });
+      }),
+  },
+  {
+    pattern:
+      /^the new start envelope reports a different Run in phase awaitingAgent$/,
+    run: (world) =>
+      Effect.sync(() => {
+        expect(world.newStartEnvelope?.result).toMatchObject({
+          phase: "awaitingAgent",
+          runId: expect.any(String),
+        });
+        expect(world.newStartEnvelope?.result?.runId).not.toBe(
+          world.startEnvelope?.result?.runId,
         );
       }),
   },

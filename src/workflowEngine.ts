@@ -70,6 +70,10 @@ export interface WorkflowEngine {
   readonly getStatus: (
     runId: RunId,
   ) => Effect.Effect<RunStatus, WorkflowError>;
+  readonly abandon: (
+    runId: RunId,
+    reason: string,
+  ) => Effect.Effect<RunStatus, WorkflowError>;
 }
 
 export const AUTOMATIC_PHASES = {
@@ -246,4 +250,8 @@ export const makeWorkflowEngine = ({
     ),
   getPendingJob: (runId) => runStore.getPendingJob(runId),
   getStatus: (runId) => runStore.getStatus(runId),
+  abandon: (runId, reason) =>
+    withTurn(runId, makeTurnOwner(), runStore, (lease) =>
+      runStore.abandon(lease, runId, reason),
+    ),
 });

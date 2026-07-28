@@ -27,4 +27,5 @@ export type DispatchResult = {
 export type RunStatus = {
   readonly runId: RunId;
   readonly phase: RunPhase;
+  readonly reason?: string;
 };

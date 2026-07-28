@@ -32,6 +32,22 @@ const parseCommand = (argv: readonly string[]): CliCommand => {
   program.command("status <run-id>").action((runId: string) => {
     command = { type: "status", runId };
   });
+  program
+    .command("runs")
+    .command("abandon <run-id>")
+    .requiredOption("--reason <reason>")
+    .action(
+      (
+        runId: string,
+        options: { readonly reason: string },
+      ) => {
+        command = {
+          type: "abandon",
+          runId,
+          reason: options.reason,
+        };
+      },
+    );
   program.parse(argv);
 
   if (command === undefined) {

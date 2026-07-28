@@ -51,6 +51,7 @@ export type RunRecord = {
   readonly runId: RunId;
   readonly phase: RunPhase;
   readonly baseUrl: URL;
+  readonly reason?: string;
 };
 
 export interface RunStore {
@@ -94,5 +95,15 @@ export interface RunStore {
   ) => Effect.Effect<
     RunStatus,
     RunNotFoundError | WorkflowStoreError
+  >;
+  readonly abandon: (
+    lease: TurnLease,
+    runId: RunId,
+    reason: string,
+  ) => Effect.Effect<
+    RunStatus,
+    | RunNotFoundError
+    | TurnOwnershipLostError
+    | WorkflowStoreError
   >;
 }

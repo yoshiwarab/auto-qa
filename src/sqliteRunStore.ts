@@ -29,6 +29,7 @@ type RunRow = {
   readonly run_id: string;
   readonly phase: string;
   readonly base_url: string;
+  readonly abandon_reason: string | null;
 };
 
 type TurnLockRow = {
@@ -45,7 +46,11 @@ const asTurnLockRow = (value: unknown): TurnLockRow | undefined =>
   value as TurnLockRow | undefined;
 
 const decodePhase = (phase: string): RunPhase => {
-  if (phase === "inspectingChanges" || phase === "awaitingAgent") {
+  if (
+    phase === "inspectingChanges" ||
+    phase === "awaitingAgent" ||
+    phase === "abandoned"
+  ) {
     return phase;
   }
   throw new Error(`Unsupported persisted Run phase: ${phase}`);
@@ -64,7 +69,8 @@ export class SqliteRunStore implements RunStore {
       CREATE TABLE IF NOT EXISTS runs (
         run_id TEXT PRIMARY KEY,
         phase TEXT NOT NULL,
-        base_url TEXT NOT NULL
+        base_url TEXT NOT NULL,
+        abandon_reason TEXT
       ) STRICT;
 
       CREATE TABLE IF NOT EXISTS operations (
@@ -162,7 +168,7 @@ export class SqliteRunStore implements RunStore {
       const row = asRunRow(
         this.database
           .prepare(
-            "SELECT run_id, phase, base_url FROM runs WHERE run_id = ?",
+            "SELECT run_id, phase, base_url, abandon_reason FROM runs WHERE run_id = ?",
           )
           .get(runId),
       );
@@ -172,6 +178,9 @@ export class SqliteRunStore implements RunStore {
             runId: RunId(row.run_id),
             phase: decodePhase(row.phase),
             baseUrl: new URL(row.base_url),
+            ...(row.abandon_reason === null
+              ? {}
+              : { reason: row.abandon_reason }),
           };
     });
   }
@@ -197,7 +206,7 @@ export class SqliteRunStore implements RunStore {
           const activeRun = asRunRow(
             this.database
               .prepare(
-                "SELECT run_id, phase, base_url FROM runs LIMIT 1",
+                "SELECT run_id, phase, base_url, abandon_reason FROM runs WHERE phase != 'abandoned' LIMIT 1",
               )
               .get(),
           );
@@ -311,8 +320,64 @@ export class SqliteRunStore implements RunStore {
         : Effect.succeed({
             runId: run.runId,
             phase: run.phase,
+            ...(run.reason === undefined
+              ? {}
+              : { reason: run.reason }),
           }),
     );
+  }
+
+  abandon(
+    lease: TurnLease,
+    runId: RunId,
+    reason: string,
+  ): Effect.Effect<
+    RunStatus,
+    | RunNotFoundError
+    | TurnOwnershipLostError
+    | WorkflowStoreError
+  > {
+    return Effect.gen(this, function* () {
+      const result = yield* this.transaction("abandon Run", () => {
+        if (!this.ownsTurn(lease)) {
+          return { type: "ownership-lost" } as const;
+        }
+        const row = asRunRow(
+          this.database
+            .prepare(
+              "SELECT run_id, phase, base_url, abandon_reason FROM runs WHERE run_id = ?",
+            )
+            .get(runId),
+        );
+        if (row === undefined) {
+          return { type: "not-found" } as const;
+        }
+        this.database
+          .prepare(
+            "UPDATE runs SET phase = 'abandoned', abandon_reason = ? WHERE run_id = ?",
+          )
+          .run(reason, runId);
+        this.database
+          .prepare("DELETE FROM jobs WHERE run_id = ?")
+          .run(runId);
+        return { type: "abandoned" } as const;
+      });
+      if (result.type === "ownership-lost") {
+        return yield* Effect.fail(
+            new TurnOwnershipLostError({
+              ownershipToken: lease.ownershipToken,
+            }),
+          );
+      }
+      if (result.type === "not-found") {
+        return yield* Effect.fail(new RunNotFoundError({ runId }));
+      }
+      return {
+        runId,
+        phase: "abandoned" as const,
+        reason,
+      };
+    });
   }
 
   private transaction<Result>(
