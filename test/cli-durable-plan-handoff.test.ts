@@ -301,7 +301,6 @@ describe("CLI durable generate-plan handoff", () => {
       firstEnvelope.result.runId,
     ]);
     const statusEnvelope = parseOnlyJsonLine(status.stdout);
-
     expect(first).toMatchObject({ exitCode: 0, stderr: "" });
     expect(second).toMatchObject({ exitCode: 1, stderr: "" });
     expect(secondEnvelope).toMatchObject({
@@ -351,6 +350,11 @@ describe("CLI durable generate-plan handoff", () => {
       firstEnvelope.result.runId,
     ]);
     const statusEnvelope = parseOnlyJsonLine(status.stdout);
+    const job = await runCli(worktree, [
+      "job",
+      firstEnvelope.result.runId,
+    ]);
+    const jobEnvelope = parseOnlyJsonLine(job.stdout);
     const next = await runCli(worktree, [
       "start",
       "--base-url",
@@ -363,7 +367,7 @@ describe("CLI durable generate-plan handoff", () => {
       };
     };
 
-    for (const result of [abandon, status, next]) {
+    for (const result of [abandon, status, job, next]) {
       expect(result).toMatchObject({ exitCode: 0, stderr: "" });
     }
     for (const envelope of [
@@ -382,6 +386,9 @@ describe("CLI durable generate-plan handoff", () => {
     });
     expect(statusEnvelope).toMatchObject({
       result: { phase: "abandoned", reason },
+    });
+    expect(jobEnvelope).toMatchObject({
+      result: { phase: "abandoned", job: null },
     });
     expect(nextEnvelope.result).toMatchObject({
       phase: "awaitingAgent",
@@ -423,11 +430,18 @@ describe("CLI durable generate-plan handoff", () => {
         process_started_at TEXT NOT NULL,
         ownership_token TEXT NOT NULL UNIQUE
       ) STRICT;
-      INSERT INTO runs (run_id, phase, base_url)
-      VALUES ('legacy-run', 'awaitingAgent', 'http://example.invalid/');
     `);
+    database
+      .prepare(
+        "INSERT INTO runs (run_id, phase, base_url) VALUES ('legacy-run', 'awaitingAgent', ?)",
+      )
+      .run(baseUrl.href);
     database.close();
 
+    const legacyStatus = await runCli(worktree, [
+      "status",
+      "legacy-run",
+    ]);
     const abandoned = await runCli(worktree, [
       "runs",
       "abandon",
@@ -447,6 +461,11 @@ describe("CLI durable generate-plan handoff", () => {
       "legacy-run",
     ]);
 
+    expect(legacyStatus).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(parseOnlyJsonLine(legacyStatus.stdout)).toMatchObject({
+      ok: true,
+      result: { phase: "awaitingAgent" },
+    });
     expect(abandoned).toMatchObject({ exitCode: 0, stderr: "" });
     expect(repeated).toMatchObject({ exitCode: 1, stderr: "" });
     expect(parseOnlyJsonLine(repeated.stdout)).toMatchObject({

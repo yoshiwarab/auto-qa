@@ -58,6 +58,8 @@ const decodePhase = (phase: string): RunPhase => {
 };
 
 export class SqliteRunStore implements RunStore {
+  private readonly hasAbandonReason: boolean;
+
   constructor(
     private readonly database: DatabaseSync,
     initialize = true,
@@ -103,15 +105,16 @@ export class SqliteRunStore implements RunStore {
         payload_json TEXT NOT NULL
       ) STRICT;
       `);
-      const runColumns = this.database
-        .prepare("PRAGMA table_info(runs)")
-        .all() as unknown as readonly { readonly name: string }[];
+      const runColumns = this.runColumns();
       if (!runColumns.some((column) => column.name === "abandon_reason")) {
         this.database.exec(
           "ALTER TABLE runs ADD COLUMN abandon_reason TEXT",
         );
       }
     }
+    this.hasAbandonReason = this.runColumns().some(
+      (column) => column.name === "abandon_reason",
+    );
   }
 
   close(): void {
@@ -184,7 +187,7 @@ export class SqliteRunStore implements RunStore {
       const row = asRunRow(
         this.database
           .prepare(
-            "SELECT run_id, phase, base_url, abandon_reason FROM runs WHERE run_id = ?",
+            `SELECT run_id, phase, base_url, ${this.abandonReasonSelection()} FROM runs WHERE run_id = ?`,
           )
           .get(runId),
       );
@@ -222,7 +225,7 @@ export class SqliteRunStore implements RunStore {
           const activeRun = asRunRow(
             this.database
               .prepare(
-                "SELECT run_id, phase, base_url, abandon_reason FROM runs WHERE phase != 'abandoned' LIMIT 1",
+                `SELECT run_id, phase, base_url, ${this.abandonReasonSelection()} FROM runs WHERE phase != 'abandoned' LIMIT 1`,
               )
               .get(),
           );
@@ -315,7 +318,9 @@ export class SqliteRunStore implements RunStore {
     return this.tryStore("read pending Job", () => {
       const row = asJobRow(
         this.database
-          .prepare("SELECT job_json FROM jobs WHERE run_id = ?")
+          .prepare(
+            "SELECT jobs.job_json FROM jobs JOIN runs ON runs.run_id = jobs.run_id WHERE jobs.run_id = ? AND runs.phase = 'awaitingAgent'",
+          )
           .get(runId),
       );
       return row === undefined
@@ -363,7 +368,7 @@ export class SqliteRunStore implements RunStore {
         const row = asRunRow(
           this.database
             .prepare(
-              "SELECT run_id, phase, base_url, abandon_reason FROM runs WHERE run_id = ?",
+              `SELECT run_id, phase, base_url, ${this.abandonReasonSelection()} FROM runs WHERE run_id = ?`,
             )
             .get(runId),
         );
@@ -437,6 +442,18 @@ export class SqliteRunStore implements RunStore {
         )
         .get(lease.ownershipToken) !== undefined
     );
+  }
+
+  private runColumns(): readonly { readonly name: string }[] {
+    return this.database
+      .prepare("PRAGMA table_info(runs)")
+      .all() as unknown as readonly { readonly name: string }[];
+  }
+
+  private abandonReasonSelection(): string {
+    return this.hasAbandonReason
+      ? "abandon_reason"
+      : "NULL AS abandon_reason";
   }
 
   private tryStore<Result>(
