@@ -13,6 +13,7 @@ export default defineConfig({
       reportsDirectory: "build/coverage",
     },
     exclude: [
+      ".repos/**",
       ".worktrees/**",
       "build/**",
       "dist/**",
