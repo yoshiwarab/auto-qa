@@ -11,6 +11,7 @@ import {
   InvalidTransitionError,
   RunId,
   RunBusyError,
+  RunNotFoundError,
   TurnOwnershipLostError,
   WorkflowStoreError,
   createWorkflowEngine,
@@ -54,6 +55,14 @@ const withHarnessBaseUrl = async <Result>(
   }
 };
 
+const createNoChangeWorkflowEngine = (databasePath: string) =>
+  createWorkflowEngine({
+    databasePath,
+    changeInspector: {
+      inspect: () => Effect.succeed([]),
+    },
+  });
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
@@ -68,12 +77,9 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
     const pendingJob = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const engine = yield* createWorkflowEngine({
-            databasePath: join(directory, "state.db"),
-            changeInspector: {
-              inspect: () => Effect.succeed([]),
-            },
-          });
+          const engine = yield* createNoChangeWorkflowEngine(
+            join(directory, "state.db"),
+          );
           return yield* engine.getPendingJob(RunId("missing-run"));
         }),
       ),
@@ -451,6 +457,86 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         });
       }
     });
+  });
+
+  test("abandon makes a Run terminal and removes its pending Job", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const runId = RunId("run-abandoned");
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      const result = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine =
+              yield* createNoChangeWorkflowEngine(databasePath);
+            yield* engine.dispatch(runId, {
+              type: "start",
+              baseUrl,
+            });
+            const abandoned = yield* engine.dispatch(runId, {
+              type: "abandon",
+              reason: "superseded",
+            });
+            return {
+              abandoned,
+              status: yield* engine.getStatus(runId),
+              pendingJob: yield* engine.getPendingJob(runId),
+              repeated: yield* Effect.either(
+                engine.dispatch(runId, {
+                  type: "abandon",
+                  reason: "must not replace the original reason",
+                }),
+              ),
+            };
+          }),
+        ),
+      );
+
+      expect(result).toMatchObject({
+        abandoned: {
+          runId,
+          phase: "abandoned",
+          reason: "superseded",
+        },
+        status: {
+          runId,
+          phase: "abandoned",
+          reason: "superseded",
+        },
+        pendingJob: null,
+      });
+      expect(result.repeated._tag).toBe("Left");
+      if (result.repeated._tag === "Left") {
+        expect(result.repeated.left).toBeInstanceOf(
+          InvalidTransitionError,
+        );
+      }
+    });
+  });
+
+  test("abandon reports a missing Run through the WorkflowEngine seam", async () => {
+    const directory = await makeTemporaryDirectory();
+    const result = await Effect.runPromise(
+      Effect.either(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* createNoChangeWorkflowEngine(
+              join(directory, "state.db"),
+            );
+            return yield* engine.dispatch(RunId("missing-run"), {
+              type: "abandon",
+              reason: "superseded",
+            });
+          }),
+        ),
+      ),
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left).toBeInstanceOf(RunNotFoundError);
+    }
   });
 
   test("each dispatch allocates fresh Turn ownership", async () => {

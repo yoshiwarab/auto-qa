@@ -17,6 +17,7 @@ import {
   RunId,
   type RunPhase,
 } from "./workflowMachine.js";
+import { prepareSqliteRunStoreSchema } from "./sqliteRunStoreSchema.js";
 import type {
   GeneratePlanJob,
   RunStatus,
@@ -64,57 +65,10 @@ export class SqliteRunStore implements RunStore {
     private readonly database: DatabaseSync,
     initialize = true,
   ) {
-    if (initialize) {
-      this.database.exec(`
-      PRAGMA journal_mode = WAL;
-      PRAGMA foreign_keys = ON;
-
-      CREATE TABLE IF NOT EXISTS runs (
-        run_id TEXT PRIMARY KEY,
-        phase TEXT NOT NULL,
-        base_url TEXT NOT NULL,
-        abandon_reason TEXT
-      ) STRICT;
-
-      CREATE TABLE IF NOT EXISTS operations (
-        operation_id TEXT PRIMARY KEY,
-        run_id TEXT NOT NULL REFERENCES runs(run_id),
-        kind TEXT NOT NULL,
-        status TEXT NOT NULL,
-        recovery_policy TEXT NOT NULL
-      ) STRICT;
-
-      CREATE TABLE IF NOT EXISTS jobs (
-        job_id TEXT PRIMARY KEY,
-        run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id),
-        job_json TEXT NOT NULL
-      ) STRICT;
-
-      CREATE TABLE IF NOT EXISTS turn_lock (
-        lock_id INTEGER PRIMARY KEY CHECK (lock_id = 1),
-        run_id TEXT NOT NULL,
-        process_id INTEGER NOT NULL,
-        process_started_at TEXT NOT NULL,
-        ownership_token TEXT NOT NULL UNIQUE
-      ) STRICT;
-
-      CREATE TABLE IF NOT EXISTS events (
-        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL REFERENCES runs(run_id),
-        type TEXT NOT NULL,
-        payload_json TEXT NOT NULL
-      ) STRICT;
-      `);
-      const runColumns = this.runColumns();
-      if (!runColumns.some((column) => column.name === "abandon_reason")) {
-        this.database.exec(
-          "ALTER TABLE runs ADD COLUMN abandon_reason TEXT",
-        );
-      }
-    }
-    this.hasAbandonReason = this.runColumns().some(
-      (column) => column.name === "abandon_reason",
-    );
+    this.hasAbandonReason = prepareSqliteRunStoreSchema(
+      database,
+      initialize,
+    ).hasAbandonReason;
   }
 
   close(): void {
@@ -352,7 +306,6 @@ export class SqliteRunStore implements RunStore {
     lease: TurnLease,
     runId: RunId,
     reason: string,
-    phase: "abandoned",
   ): Effect.Effect<
     RunStatus,
     | RunNotFoundError
@@ -392,10 +345,10 @@ export class SqliteRunStore implements RunStore {
       });
       if (result.type === "ownership-lost") {
         return yield* Effect.fail(
-            new TurnOwnershipLostError({
-              ownershipToken: lease.ownershipToken,
-            }),
-          );
+          new TurnOwnershipLostError({
+            ownershipToken: lease.ownershipToken,
+          }),
+        );
       }
       if (result.type === "not-found") {
         return yield* Effect.fail(new RunNotFoundError({ runId }));
@@ -411,7 +364,7 @@ export class SqliteRunStore implements RunStore {
       }
       return {
         runId,
-        phase,
+        phase: "abandoned",
         reason,
       };
     });
@@ -442,12 +395,6 @@ export class SqliteRunStore implements RunStore {
         )
         .get(lease.ownershipToken) !== undefined
     );
-  }
-
-  private runColumns(): readonly { readonly name: string }[] {
-    return this.database
-      .prepare("PRAGMA table_info(runs)")
-      .all() as unknown as readonly { readonly name: string }[];
   }
 
   private abandonReasonSelection(): string {

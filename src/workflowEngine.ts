@@ -229,24 +229,13 @@ export const makeWorkflowEngine = ({
               );
             }
             const transition = step(persisted, event);
-            const abandoned =
-              transition._tag === "Left"
-                ? yield* Effect.fail(transition.left)
-                : transition.right;
-            if (abandoned.phase !== "abandoned") {
-              return yield* Effect.fail(
-                new InvalidTransitionError({
-                  phase: persisted.phase,
-                  event: event.type,
-                  allowedEvents: allowedEvents(persisted.phase),
-                }),
-              );
+            if (transition._tag === "Left") {
+              return yield* Effect.fail(transition.left);
             }
             return yield* runStore.abandon(
               lease,
               runId,
               event.reason,
-              abandoned.phase,
             );
           }
           const initialTransition = step(

@@ -101,7 +101,6 @@ export interface RunStore {
     lease: TurnLease,
     runId: RunId,
     reason: string,
-    phase: "abandoned",
   ) => Effect.Effect<
     RunStatus,
     | RunNotFoundError
