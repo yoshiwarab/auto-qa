@@ -1,6 +1,6 @@
 # mutation-stamp: sha256=5a8b1c30729cba3d2d62c53551343f1a517b56d1cef93200da88d295e016f750
 # acceptance-mutation-manifest-begin
-# {"version":1,"tested_at":"2026-07-25T03:58:27.061329683Z","feature_name":"CLI durable generate-plan handoff","feature_path":"features/cli-durable-generate-plan-handoff.feature","background_hash":"74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b","implementation_hash":"sha256:e28c0091285211ecf75d19c2d2894e37a8b61672aba165a3814b5aa33e0d9831","scenarios":[{"index":0,"name":"CLI durable generate-plan handoff 001","scenario_hash":"fcaf42a6350c4a2d3c2d6d5d73a2c81d5b5480cac8a71c94fe28a298087fd39d","mutation_count":3,"result":{"Total":3,"Killed":3,"Survived":0,"Errors":0},"tested_at":"2026-07-24T23:40:09.089053374Z"}]}
+# {"version":1,"tested_at":"2026-07-28T19:04:13.473075949Z","feature_name":"CLI durable generate-plan handoff","feature_path":"features/cli-durable-generate-plan-handoff.feature","background_hash":"74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b","implementation_hash":"sha256:e28c0091285211ecf75d19c2d2894e37a8b61672aba165a3814b5aa33e0d9831","scenarios":[{"index":0,"name":"CLI durable generate-plan handoff 001","scenario_hash":"fcaf42a6350c4a2d3c2d6d5d73a2c81d5b5480cac8a71c94fe28a298087fd39d","mutation_count":3,"result":{"Total":3,"Killed":3,"Survived":0,"Errors":0},"tested_at":"2026-07-24T23:40:09.089053374Z"}]}
 # acceptance-mutation-manifest-end
 
 # Scenario: CLI durable generate-plan handoff 001

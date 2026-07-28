@@ -177,6 +177,12 @@ const startRun = async (world: World): Promise<void> => {
   world.startEnvelope = envelope(world.start);
 };
 
+const startedRunId = (world: World): string => {
+  const runId = world.startEnvelope?.result?.runId;
+  if (runId === undefined) throw new Error("Missing Run id");
+  return runId;
+};
+
 const handlers: readonly StepHandler<World>[] = [
   {
     pattern:
@@ -205,8 +211,7 @@ const handlers: readonly StepHandler<World>[] = [
       /^separate fresh CLI processes invoke the job and status commands for the returned Run$/,
     run: (world) =>
       Effect.tryPromise(async () => {
-        const runId = world.startEnvelope?.result?.runId;
-        if (runId === undefined) throw new Error("Missing Run id");
+        const runId = startedRunId(world);
         world.job = await runCli(world, ["job", runId]);
         world.status = await runCli(world, ["status", runId]);
         world.jobEnvelope = envelope(world.job);
@@ -370,8 +375,7 @@ const handlers: readonly StepHandler<World>[] = [
       /^a fresh status process reports the first Run in phase <([A-Za-z0-9_]+)>$/,
     run: (world, example, captures) =>
       Effect.tryPromise(async () => {
-        const runId = world.startEnvelope?.result?.runId;
-        if (runId === undefined) throw new Error("Missing Run id");
+        const runId = startedRunId(world);
         world.status = await runCli(world, ["status", runId]);
         world.statusEnvelope = envelope(world.status);
         expect(world.status).toMatchObject({
@@ -393,8 +397,7 @@ const handlers: readonly StepHandler<World>[] = [
       /^another fresh CLI process invokes runs abandon for the first Run with reason <([A-Za-z0-9_]+)>$/,
     run: (world, example, captures) =>
       Effect.tryPromise(async () => {
-        const runId = world.startEnvelope?.result?.runId;
-        if (runId === undefined) throw new Error("Missing Run id");
+        const runId = startedRunId(world);
         world.abandon = await runCli(world, [
           "runs",
           "abandon",
@@ -409,8 +412,7 @@ const handlers: readonly StepHandler<World>[] = [
     pattern: /^a fresh status process reads the first Run$/,
     run: (world) =>
       Effect.tryPromise(async () => {
-        const runId = world.startEnvelope?.result?.runId;
-        if (runId === undefined) throw new Error("Missing Run id");
+        const runId = startedRunId(world);
         world.status = await runCli(world, ["status", runId]);
         world.statusEnvelope = envelope(world.status);
       }),

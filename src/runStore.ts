@@ -2,7 +2,6 @@ import { Data, Effect } from "effect";
 import type {
   InvalidTransitionError,
   RunId,
-  RunPhase,
 } from "./workflowMachine.js";
 import type {
   GeneratePlanJob,
@@ -48,11 +47,8 @@ export type TurnLease = {
   readonly ownershipToken: string;
 };
 
-export type RunRecord = {
-  readonly runId: RunId;
-  readonly phase: RunPhase;
+export type RunRecord = RunStatus & {
   readonly baseUrl: URL;
-  readonly reason?: string;
 };
 
 export interface RunStore {

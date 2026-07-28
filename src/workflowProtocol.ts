@@ -24,8 +24,18 @@ export type DispatchResult = {
   readonly pendingJob: GeneratePlanJob;
 };
 
-export type RunStatus = {
+type IdentifiedRunStatus = {
   readonly runId: RunId;
-  readonly phase: RunPhase;
-  readonly reason?: string;
 };
+
+export type RunStatus = IdentifiedRunStatus &
+  (
+    | {
+        readonly phase: Exclude<RunPhase, "abandoned">;
+        readonly reason?: never;
+      }
+    | {
+        readonly phase: "abandoned";
+        readonly reason: string;
+      }
+  );

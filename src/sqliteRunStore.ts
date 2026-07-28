@@ -58,6 +58,18 @@ const decodePhase = (phase: string): RunPhase => {
   throw new Error(`Unsupported persisted Run phase: ${phase}`);
 };
 
+const toRunStatus = (run: RunRecord): RunStatus =>
+  run.phase === "abandoned"
+    ? {
+        runId: run.runId,
+        phase: run.phase,
+        reason: run.reason,
+      }
+    : {
+        runId: run.runId,
+        phase: run.phase,
+      };
+
 export class SqliteRunStore implements RunStore {
   private readonly hasAbandonReason: boolean;
 
@@ -145,16 +157,26 @@ export class SqliteRunStore implements RunStore {
           )
           .get(runId),
       );
-      return row === undefined
-        ? null
-        : {
-            runId: RunId(row.run_id),
-            phase: decodePhase(row.phase),
-            baseUrl: new URL(row.base_url),
-            ...(row.abandon_reason === null
-              ? {}
-              : { reason: row.abandon_reason }),
-          };
+      if (row === undefined) return null;
+      const phase = decodePhase(row.phase);
+      if (phase === "abandoned") {
+        if (row.abandon_reason === null) {
+          throw new Error(
+            `Persisted abandoned Run ${row.run_id} has no reason`,
+          );
+        }
+        return {
+          runId: RunId(row.run_id),
+          phase,
+          baseUrl: new URL(row.base_url),
+          reason: row.abandon_reason,
+        };
+      }
+      return {
+        runId: RunId(row.run_id),
+        phase,
+        baseUrl: new URL(row.base_url),
+      };
     });
   }
 
@@ -292,13 +314,7 @@ export class SqliteRunStore implements RunStore {
     return Effect.flatMap(this.loadRun(runId), (run) =>
       run === null
         ? Effect.fail(new RunNotFoundError({ runId }))
-        : Effect.succeed({
-            runId: run.runId,
-            phase: run.phase,
-            ...(run.reason === undefined
-              ? {}
-              : { reason: run.reason }),
-          }),
+        : Effect.succeed(toRunStatus(run)),
     );
   }
 
