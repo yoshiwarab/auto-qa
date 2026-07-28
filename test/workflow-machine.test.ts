@@ -51,6 +51,10 @@ const eventFixtures = {
   changesInspected: (): MachineEvent => ({
     type: "changesInspected",
   }),
+  abandon: (): MachineEvent => ({
+    type: "abandon",
+    reason: "superseded",
+  }),
 } satisfies Record<MachineEventType, () => MachineEvent>;
 
 const eventTypes = Object.keys(

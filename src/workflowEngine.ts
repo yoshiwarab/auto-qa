@@ -2,7 +2,6 @@ import { Effect } from "effect";
 import type {
   ActiveRunExistsError,
   RunBusyError,
-  RunNotFoundError,
   RunRecord,
   RunStore,
   TurnLease,
@@ -10,10 +9,12 @@ import type {
   TurnOwnershipLostError,
   WorkflowStoreError,
 } from "./runStore.js";
+import { RunNotFoundError } from "./runStore.js";
 import {
   InvalidTransitionError,
   allowedEvents,
   step,
+  type AbandonEvent,
   type ExternalEvent,
   type MachinePhase,
   type MachineSnapshot,
@@ -60,19 +61,21 @@ export type WorkflowError =
   | WorkflowStoreError;
 
 export interface WorkflowEngine {
-  readonly dispatch: (
-    runId: RunId,
-    event: ExternalEvent,
-  ) => Effect.Effect<DispatchResult, WorkflowError>;
+  readonly dispatch: {
+    (
+      runId: RunId,
+      event: StartEvent,
+    ): Effect.Effect<DispatchResult, WorkflowError>;
+    (
+      runId: RunId,
+      event: AbandonEvent,
+    ): Effect.Effect<RunStatus, WorkflowError>;
+  };
   readonly getPendingJob: (
     runId: RunId,
   ) => Effect.Effect<GeneratePlanJob | null, WorkflowError>;
   readonly getStatus: (
     runId: RunId,
-  ) => Effect.Effect<RunStatus, WorkflowError>;
-  readonly abandon: (
-    runId: RunId,
-    reason: string,
   ) => Effect.Effect<RunStatus, WorkflowError>;
 }
 
@@ -211,11 +214,41 @@ export const makeWorkflowEngine = ({
   readonly runStore: RunStore;
   readonly changeInspector: ChangeInspector;
   readonly makeTurnOwner: () => TurnOwner;
-}): WorkflowEngine => ({
-  dispatch: (runId, event) =>
+}): WorkflowEngine => {
+  const dispatch = (
+    runId: RunId,
+    event: ExternalEvent,
+  ): Effect.Effect<DispatchResult | RunStatus, WorkflowError> =>
     withTurn(runId, makeTurnOwner(), runStore, (lease) =>
         Effect.gen(function* () {
           const persisted = yield* runStore.loadRun(runId);
+          if (event.type === "abandon") {
+            if (persisted === null) {
+              return yield* Effect.fail(
+                new RunNotFoundError({ runId }),
+              );
+            }
+            const transition = step(persisted, event);
+            const abandoned =
+              transition._tag === "Left"
+                ? yield* Effect.fail(transition.left)
+                : transition.right;
+            if (abandoned.phase !== "abandoned") {
+              return yield* Effect.fail(
+                new InvalidTransitionError({
+                  phase: persisted.phase,
+                  event: event.type,
+                  allowedEvents: allowedEvents(persisted.phase),
+                }),
+              );
+            }
+            return yield* runStore.abandon(
+              lease,
+              runId,
+              event.reason,
+              abandoned.phase,
+            );
+          }
           const initialTransition = step(
             {
               runId,
@@ -247,11 +280,11 @@ export const makeWorkflowEngine = ({
             changeInspector,
           );
         }),
-    ),
-  getPendingJob: (runId) => runStore.getPendingJob(runId),
-  getStatus: (runId) => runStore.getStatus(runId),
-  abandon: (runId, reason) =>
-    withTurn(runId, makeTurnOwner(), runStore, (lease) =>
-      runStore.abandon(lease, runId, reason),
-    ),
-});
+    );
+
+  return {
+    dispatch: dispatch as WorkflowEngine["dispatch"],
+    getPendingJob: (runId) => runStore.getPendingJob(runId),
+    getStatus: (runId) => runStore.getStatus(runId),
+  };
+};

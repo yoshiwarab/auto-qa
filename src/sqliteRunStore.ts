@@ -13,6 +13,7 @@ import {
   WorkflowStoreError,
 } from "./runStore.js";
 import {
+  InvalidTransitionError,
   RunId,
   type RunPhase,
 } from "./workflowMachine.js";
@@ -94,7 +95,22 @@ export class SqliteRunStore implements RunStore {
         process_started_at TEXT NOT NULL,
         ownership_token TEXT NOT NULL UNIQUE
       ) STRICT;
+
+      CREATE TABLE IF NOT EXISTS events (
+        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL REFERENCES runs(run_id),
+        type TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+      ) STRICT;
       `);
+      const runColumns = this.database
+        .prepare("PRAGMA table_info(runs)")
+        .all() as unknown as readonly { readonly name: string }[];
+      if (!runColumns.some((column) => column.name === "abandon_reason")) {
+        this.database.exec(
+          "ALTER TABLE runs ADD COLUMN abandon_reason TEXT",
+        );
+      }
     }
   }
 
@@ -331,9 +347,11 @@ export class SqliteRunStore implements RunStore {
     lease: TurnLease,
     runId: RunId,
     reason: string,
+    phase: "abandoned",
   ): Effect.Effect<
     RunStatus,
     | RunNotFoundError
+    | InvalidTransitionError
     | TurnOwnershipLostError
     | WorkflowStoreError
   > {
@@ -352,14 +370,19 @@ export class SqliteRunStore implements RunStore {
         if (row === undefined) {
           return { type: "not-found" } as const;
         }
+        if (row.phase === "abandoned") {
+          return { type: "already-terminal" } as const;
+        }
+        this.database
+          .prepare(
+            "INSERT INTO events (run_id, type, payload_json) VALUES (?, 'abandon', ?)",
+          )
+          .run(runId, JSON.stringify({ reason }));
         this.database
           .prepare(
             "UPDATE runs SET phase = 'abandoned', abandon_reason = ? WHERE run_id = ?",
           )
           .run(reason, runId);
-        this.database
-          .prepare("DELETE FROM jobs WHERE run_id = ?")
-          .run(runId);
         return { type: "abandoned" } as const;
       });
       if (result.type === "ownership-lost") {
@@ -372,9 +395,18 @@ export class SqliteRunStore implements RunStore {
       if (result.type === "not-found") {
         return yield* Effect.fail(new RunNotFoundError({ runId }));
       }
+      if (result.type === "already-terminal") {
+        return yield* Effect.fail(
+          new InvalidTransitionError({
+            phase: "abandoned",
+            event: "abandon",
+            allowedEvents: [],
+          }),
+        );
+      }
       return {
         runId,
-        phase: "abandoned" as const,
+        phase,
         reason,
       };
     });

@@ -12,6 +12,7 @@ export {
 
 export {
   InvalidTransitionError,
+  type AbandonEvent,
   RunId,
   step,
   TRANSITIONS,

@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import {
   afterAll,
@@ -388,5 +389,76 @@ describe("CLI durable generate-plan handoff", () => {
     expect(nextEnvelope.result.runId).not.toBe(
       firstEnvelope.result.runId,
     );
+  });
+
+  test("abandon migrates durable state and keeps terminal history immutable", async () => {
+    const worktree = await makeTemporaryGitWorktree();
+    const stateDirectory = join(worktree, ".auto-qa");
+    await mkdir(stateDirectory, { recursive: true });
+    const database = new DatabaseSync(
+      join(stateDirectory, "state.db"),
+    );
+    database.exec(`
+      CREATE TABLE runs (
+        run_id TEXT PRIMARY KEY,
+        phase TEXT NOT NULL,
+        base_url TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE operations (
+        operation_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(run_id),
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        recovery_policy TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE jobs (
+        job_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id),
+        job_json TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE turn_lock (
+        lock_id INTEGER PRIMARY KEY CHECK (lock_id = 1),
+        run_id TEXT NOT NULL,
+        process_id INTEGER NOT NULL,
+        process_started_at TEXT NOT NULL,
+        ownership_token TEXT NOT NULL UNIQUE
+      ) STRICT;
+      INSERT INTO runs (run_id, phase, base_url)
+      VALUES ('legacy-run', 'awaitingAgent', 'http://example.invalid/');
+    `);
+    database.close();
+
+    const abandoned = await runCli(worktree, [
+      "runs",
+      "abandon",
+      "legacy-run",
+      "--reason",
+      "superseded",
+    ]);
+    const repeated = await runCli(worktree, [
+      "runs",
+      "abandon",
+      "legacy-run",
+      "--reason",
+      "overwritten",
+    ]);
+    const status = await runCli(worktree, [
+      "status",
+      "legacy-run",
+    ]);
+
+    expect(abandoned).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(repeated).toMatchObject({ exitCode: 1, stderr: "" });
+    expect(parseOnlyJsonLine(repeated.stdout)).toMatchObject({
+      ok: false,
+      error: { code: "InvalidTransitionError" },
+    });
+    expect(parseOnlyJsonLine(status.stdout)).toMatchObject({
+      ok: true,
+      result: {
+        phase: "abandoned",
+        reason: "superseded",
+      },
+    });
   });
 });

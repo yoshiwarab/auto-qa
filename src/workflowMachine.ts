@@ -13,7 +13,12 @@ export type StartEvent = {
   readonly baseUrl: URL;
 };
 
-export type ExternalEvent = StartEvent;
+export type AbandonEvent = {
+  readonly type: "abandon";
+  readonly reason: string;
+};
+
+export type ExternalEvent = StartEvent | AbandonEvent;
 
 export type ChangesInspectedEvent = {
   readonly type: "changesInspected";
@@ -48,8 +53,11 @@ export const TRANSITIONS = {
   },
   inspectingChanges: {
     changesInspected: "awaitingAgent",
+    abandon: "abandoned",
   },
-  awaitingAgent: {},
+  awaitingAgent: {
+    abandon: "abandoned",
+  },
   abandoned: {},
 } as const satisfies Record<
   MachinePhase,

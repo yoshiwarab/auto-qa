@@ -447,7 +447,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         expect(repeatedStart.left).toMatchObject({
           phase: "awaitingAgent",
           event: "start",
-          allowedEvents: [],
+          allowedEvents: ["abandon"],
         });
       }
     });

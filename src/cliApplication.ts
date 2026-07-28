@@ -101,7 +101,10 @@ export const runCliCommand = (
 
       const runId = RunId(command.runId);
       if (command.type === "abandon") {
-        const status = yield* engine.abandon(runId, command.reason);
+        const status = yield* engine.dispatch(runId, {
+          type: "abandon",
+          reason: command.reason,
+        });
         return cliSuccess(status, makeId());
       }
       if (command.type === "job") {

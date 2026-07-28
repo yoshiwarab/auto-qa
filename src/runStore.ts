@@ -1,5 +1,6 @@
 import { Data, Effect } from "effect";
 import type {
+  InvalidTransitionError,
   RunId,
   RunPhase,
 } from "./workflowMachine.js";
@@ -100,9 +101,11 @@ export interface RunStore {
     lease: TurnLease,
     runId: RunId,
     reason: string,
+    phase: "abandoned",
   ) => Effect.Effect<
     RunStatus,
     | RunNotFoundError
+    | InvalidTransitionError
     | TurnOwnershipLostError
     | WorkflowStoreError
   >;
