@@ -32,35 +32,41 @@ const close = (server: Server): Effect.Effect<void, Error> =>
     });
   });
 
-export const makeTargetApplicationHarness = (
-  directoryPrefix: string,
-) =>
+const makeTemporaryDirectory = (directoryPrefix: string) =>
   Effect.acquireRelease(
     Effect.gen(function* () {
       const temporaryParent = join(process.cwd(), "tmp");
       yield* Effect.promise(() =>
         mkdir(temporaryParent, { recursive: true }),
       );
-      const directory = yield* Effect.promise(() =>
+      return yield* Effect.promise(() =>
         mkdtemp(join(temporaryParent, directoryPrefix)),
       );
-      const targetApplication = createServer(
-        (_request, response) => {
-          response.end("ok");
-        },
-      );
-      const baseUrl = yield* listen(targetApplication);
-
-      return { baseUrl, directory, targetApplication };
     }),
-    ({ directory, targetApplication }) =>
-      Effect.zipRight(
-        close(targetApplication),
-        Effect.promise(() => rm(directory, { recursive: true })),
-      ).pipe(Effect.orDie),
-  ).pipe(
-    Effect.map(({ baseUrl, directory }) => ({
-      baseUrl,
-      directory,
-    })),
+    (directory) =>
+      Effect.promise(() => rm(directory, { recursive: true })).pipe(
+        Effect.orDie,
+      ),
   );
+
+const makeTargetApplication = Effect.acquireRelease(
+  Effect.sync(() =>
+    createServer((_request, response) => {
+      response.end("ok");
+    }),
+  ),
+  (server) =>
+    (server.listening ? close(server) : Effect.void).pipe(
+      Effect.orDie,
+    ),
+);
+
+export const makeTargetApplicationHarness = (
+  directoryPrefix: string,
+) =>
+  Effect.gen(function* () {
+    const directory = yield* makeTemporaryDirectory(directoryPrefix);
+    const targetApplication = yield* makeTargetApplication;
+    const baseUrl = yield* listen(targetApplication);
+    return { baseUrl, directory };
+  });
