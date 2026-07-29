@@ -55,12 +55,16 @@ const withHarnessBaseUrl = async <Result>(
   }
 };
 
-const createNoChangeWorkflowEngine = (databasePath: string) =>
+const createNoChangeWorkflowEngine = (
+  databasePath: string,
+  readOnly = false,
+) =>
   createWorkflowEngine({
     databasePath,
     changeInspector: {
       inspect: () => Effect.succeed([]),
     },
+    readOnly,
   });
 
 afterEach(async () => {
@@ -294,26 +298,22 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         await inspectionStarted;
 
         const concurrent = await Effect.runPromise(
-        Effect.either(
-          Effect.scoped(
-            Effect.gen(function* () {
-              const engine = yield* createWorkflowEngine({
-                databasePath,
-                changeInspector: {
-                  inspect: () => Effect.succeed([]),
-                },
-              });
-              return yield* engine.dispatch(
-                RunId("run-lock-contender"),
-                {
-                  type: "start",
-                  baseUrl,
-                },
-              );
-            }),
+          Effect.either(
+            Effect.scoped(
+              Effect.gen(function* () {
+                const engine =
+                  yield* createNoChangeWorkflowEngine(databasePath);
+                return yield* engine.dispatch(
+                  RunId("run-lock-contender"),
+                  {
+                    type: "start",
+                    baseUrl,
+                  },
+                );
+              }),
+            ),
           ),
-        ),
-      );
+        );
 
         expect(concurrent._tag).toBe("Left");
         if (concurrent._tag === "Left") {
@@ -324,26 +324,24 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         }
 
         const observation = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const engine = yield* createWorkflowEngine({
-              databasePath,
-              changeInspector: {
-                inspect: () => Effect.succeed([]),
-              },
-              readOnly: true,
-            });
-            return {
-              status: yield* engine.getStatus(
-                RunId("run-lock-owner"),
-              ),
-              job: yield* engine.getPendingJob(
-                RunId("run-lock-owner"),
-              ),
-            };
-          }),
-        ),
-      );
+          Effect.scoped(
+            Effect.gen(function* () {
+              const engine =
+                yield* createNoChangeWorkflowEngine(
+                  databasePath,
+                  true,
+                );
+              return {
+                status: yield* engine.getStatus(
+                  RunId("run-lock-owner"),
+                ),
+                job: yield* engine.getPendingJob(
+                  RunId("run-lock-owner"),
+                ),
+              };
+            }),
+          ),
+        );
         expect(observation).toEqual({
           status: {
             runId: "run-lock-owner",
@@ -369,26 +367,22 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         });
 
         const afterRelease = await Effect.runPromise(
-        Effect.either(
-          Effect.scoped(
-            Effect.gen(function* () {
-              const engine = yield* createWorkflowEngine({
-                databasePath,
-                changeInspector: {
-                  inspect: () => Effect.succeed([]),
-                },
-              });
-              return yield* engine.dispatch(
-                RunId("run-after-release"),
-                {
-                  type: "start",
-                  baseUrl,
-                },
-              );
-            }),
+          Effect.either(
+            Effect.scoped(
+              Effect.gen(function* () {
+                const engine =
+                  yield* createNoChangeWorkflowEngine(databasePath);
+                return yield* engine.dispatch(
+                  RunId("run-after-release"),
+                  {
+                    type: "start",
+                    baseUrl,
+                  },
+                );
+              }),
+            ),
           ),
-        ),
-      );
+        );
 
         expect(afterRelease._tag).toBe("Left");
         if (afterRelease._tag === "Left") {
@@ -397,10 +391,10 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
           );
         }
       } finally {
-        releaseInspection?.([]);
-        await Effect.runPromise(
-          Fiber.interrupt(firstDispatch),
-        );
+        const release = releaseInspection;
+        releaseInspection = undefined;
+        release?.([]);
+        await Effect.runPromise(Fiber.interrupt(firstDispatch));
       }
     });
   });
