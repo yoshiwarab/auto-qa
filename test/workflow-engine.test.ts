@@ -259,7 +259,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
     const directory = await makeTemporaryDirectory();
     const databasePath = join(directory, "state.db");
     let releaseInspection:
-      | ((changes: readonly [{ kind: string; path: string }]) => void)
+      | ((changes: readonly { kind: string; path: string }[]) => void)
       | undefined;
     let markInspectionStarted: (() => void) | undefined;
     const inspectionStarted = new Promise<void>((resolve) => {
@@ -290,9 +290,10 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         ),
       );
 
-      await inspectionStarted;
+      try {
+        await inspectionStarted;
 
-      const concurrent = await Effect.runPromise(
+        const concurrent = await Effect.runPromise(
         Effect.either(
           Effect.scoped(
             Effect.gen(function* () {
@@ -314,15 +315,15 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         ),
       );
 
-      expect(concurrent._tag).toBe("Left");
-      if (concurrent._tag === "Left") {
-        expect(concurrent.left).toBeInstanceOf(RunBusyError);
-        expect(concurrent.left).toMatchObject({
-          owningRunId: "run-lock-owner",
-        });
-      }
+        expect(concurrent._tag).toBe("Left");
+        if (concurrent._tag === "Left") {
+          expect(concurrent.left).toBeInstanceOf(RunBusyError);
+          expect(concurrent.left).toMatchObject({
+            owningRunId: "run-lock-owner",
+          });
+        }
 
-      const observation = await Effect.runPromise(
+        const observation = await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
             const engine = yield* createWorkflowEngine({
@@ -343,29 +344,31 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
           }),
         ),
       );
-      expect(observation).toEqual({
-        status: {
-          runId: "run-lock-owner",
-          phase: "inspectingChanges",
-        },
-        job: null,
-      });
+        expect(observation).toEqual({
+          status: {
+            runId: "run-lock-owner",
+            phase: "inspectingChanges",
+          },
+          job: null,
+        });
 
-      releaseInspection?.([
-        { kind: "modified", path: "src/dashboard.tsx" },
-      ]);
-      const completed = await Effect.runPromise(
-        Fiber.join(firstDispatch),
-      );
-      expect(completed).toMatchObject({
-        phase: "awaitingAgent",
-        pendingJob: {
-          schemaVersion: 1,
-          type: "generate-plan",
-        },
-      });
+        const release = releaseInspection;
+        releaseInspection = undefined;
+        release?.([
+          { kind: "modified", path: "src/dashboard.tsx" },
+        ]);
+        const completed = await Effect.runPromise(
+          Fiber.join(firstDispatch),
+        );
+        expect(completed).toMatchObject({
+          phase: "awaitingAgent",
+          pendingJob: {
+            schemaVersion: 1,
+            type: "generate-plan",
+          },
+        });
 
-      const afterRelease = await Effect.runPromise(
+        const afterRelease = await Effect.runPromise(
         Effect.either(
           Effect.scoped(
             Effect.gen(function* () {
@@ -387,10 +390,16 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         ),
       );
 
-      expect(afterRelease._tag).toBe("Left");
-      if (afterRelease._tag === "Left") {
-        expect(afterRelease.left).toBeInstanceOf(
-          ActiveRunExistsError,
+        expect(afterRelease._tag).toBe("Left");
+        if (afterRelease._tag === "Left") {
+          expect(afterRelease.left).toBeInstanceOf(
+            ActiveRunExistsError,
+          );
+        }
+      } finally {
+        releaseInspection?.([]);
+        await Effect.runPromise(
+          Fiber.interrupt(firstDispatch),
         );
       }
     });
