@@ -5,6 +5,7 @@ import {
   RunBusyError,
   RunNotFoundError,
   type RecoveryPolicy,
+  type JobSubmissionState,
   type RunRecord,
   type RunStore,
   type TurnLease,
@@ -21,12 +22,19 @@ import type { ScenarioSubmission } from "./planValidation.js";
 import { prepareSqliteRunStoreSchema } from "./sqliteRunStoreSchema.js";
 import type {
   AttemptRecord,
+  CompletedDispatchResult,
   GeneratePlanJob,
   RunStatus,
 } from "./workflowProtocol.js";
 
 type JobRow = {
   readonly job_json: string;
+};
+
+type JobSubmissionRow = {
+  readonly status: "pending" | "accepted" | "completed";
+  readonly submission_hash: string | null;
+  readonly result_json: string | null;
 };
 
 type RunRow = {
@@ -59,6 +67,11 @@ type TurnLockRow = {
 
 const asJobRow = (value: unknown): JobRow | undefined =>
   value as JobRow | undefined;
+
+const asJobSubmissionRow = (
+  value: unknown,
+): JobSubmissionRow | undefined =>
+  value as JobSubmissionRow | undefined;
 
 const asRunRow = (value: unknown): RunRow | undefined =>
   value as RunRow | undefined;
@@ -108,6 +121,7 @@ const toRunStatus = (run: RunRecord): RunStatus =>
 export class SqliteRunStore implements RunStore {
   private readonly hasAbandonReason: boolean;
   private readonly hasOutcome: boolean;
+  private readonly hasJobCompletion: boolean;
 
   constructor(
     private readonly database: DatabaseSync,
@@ -119,6 +133,7 @@ export class SqliteRunStore implements RunStore {
     );
     this.hasAbandonReason = schema.hasAbandonReason;
     this.hasOutcome = schema.hasOutcome;
+    this.hasJobCompletion = schema.hasJobCompletion;
   }
 
   close(): void {
@@ -348,6 +363,7 @@ export class SqliteRunStore implements RunStore {
     lease: TurnLease,
     runId: RunId,
     scenarios: readonly ScenarioSubmission[],
+    submissionHash: string,
   ): Effect.Effect<
     readonly ScenarioSubmission[],
     TurnOwnershipLostError | WorkflowStoreError
@@ -377,8 +393,10 @@ export class SqliteRunStore implements RunStore {
               .run(runId, scenario.id, scenario.script);
           });
           this.database
-            .prepare("DELETE FROM jobs WHERE run_id = ?")
-            .run(runId);
+            .prepare(
+              "UPDATE jobs SET status = 'accepted', submission_hash = ? WHERE run_id = ?",
+            )
+            .run(submissionHash, runId);
           this.database
             .prepare("UPDATE runs SET phase = ? WHERE run_id = ?")
             .run("executingScenarios", runId);
@@ -459,6 +477,7 @@ export class SqliteRunStore implements RunStore {
   completePassingReport(
     lease: TurnLease,
     runId: RunId,
+    result: CompletedDispatchResult,
   ): Effect.Effect<
     void,
     TurnOwnershipLostError | WorkflowStoreError
@@ -477,6 +496,78 @@ export class SqliteRunStore implements RunStore {
             "UPDATE runs SET phase = 'completed', outcome = 'passed' WHERE run_id = ?",
           )
           .run(runId);
+        this.database
+          .prepare(
+            "UPDATE jobs SET status = 'completed', result_json = ? WHERE run_id = ?",
+          )
+          .run(JSON.stringify(result), runId);
+      },
+    );
+  }
+
+  getJobSubmission(
+    runId: RunId,
+    jobId: string,
+  ): Effect.Effect<
+    JobSubmissionState | null,
+    WorkflowStoreError
+  > {
+    return this.tryStore("read Job submission", () => {
+      if (!this.hasJobCompletion) return null;
+      const row = asJobSubmissionRow(
+        this.database
+          .prepare(
+            "SELECT status, submission_hash, result_json FROM jobs WHERE job_id = ? AND run_id = ?",
+          )
+          .get(jobId, runId),
+      );
+      return row === undefined
+        ? null
+        : {
+            status: row.status,
+            submissionHash: row.submission_hash,
+            result:
+              row.result_json === null
+                ? null
+                : (JSON.parse(
+                    row.result_json,
+                  ) as CompletedDispatchResult),
+          };
+    });
+  }
+
+  getActiveWorkMs(
+    runId: RunId,
+  ): Effect.Effect<number, WorkflowStoreError> {
+    return this.tryStore("read active-work budget", () => {
+      const row = this.database
+        .prepare(
+          "SELECT active_work_ms FROM runs WHERE run_id = ?",
+        )
+        .get(runId) as
+        | { readonly active_work_ms: number }
+        | undefined;
+      return row?.active_work_ms ?? 0;
+    });
+  }
+
+  recordActiveWorkMs(
+    lease: TurnLease,
+    runId: RunId,
+    elapsedMs: number,
+  ): Effect.Effect<
+    void,
+    TurnOwnershipLostError | WorkflowStoreError
+  > {
+    return this.ownedTransaction(
+      lease,
+      "record active-work budget",
+      () => {
+        this.database
+          .prepare(
+            "UPDATE runs SET active_work_ms = active_work_ms + ? WHERE run_id = ?",
+          )
+          .run(Math.max(0, Math.ceil(elapsedMs)), runId);
       },
     );
   }
@@ -488,7 +579,7 @@ export class SqliteRunStore implements RunStore {
       const row = asJobRow(
         this.database
           .prepare(
-            "SELECT jobs.job_json FROM jobs JOIN runs ON runs.run_id = jobs.run_id WHERE jobs.run_id = ? AND runs.phase = 'awaitingAgent'",
+            `SELECT jobs.job_json FROM jobs JOIN runs ON runs.run_id = jobs.run_id WHERE jobs.run_id = ? AND runs.phase = 'awaitingAgent'${this.hasJobCompletion ? " AND jobs.status = 'pending'" : ""}`,
           )
           .get(runId),
       );

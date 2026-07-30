@@ -4,7 +4,6 @@ import { Data, Effect } from "effect";
 import { cliSuccess } from "./cliProtocol.js";
 import { makeGitChangeInspector } from "./gitChangeInspector.js";
 import { findGitWorktree } from "./gitWorktree.js";
-import type { GeneratePlanSubmission } from "./planValidation.js";
 import { RunId } from "./workflowMachine.js";
 
 export type CliCommand =
@@ -115,9 +114,7 @@ export const runCliCommand = (
       if (command.type === "submit") {
         const payload = yield* Effect.tryPromise({
           try: async () =>
-            JSON.parse(
-              await readFile(command.file, "utf8"),
-            ) as GeneratePlanSubmission,
+            JSON.parse(await readFile(command.file, "utf8")) as unknown,
           catch: (cause) =>
             new CliBoundaryError({
               operation: "read Job submission",

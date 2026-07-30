@@ -1,6 +1,8 @@
-import { Effect } from "effect";
+import { createHash } from "node:crypto";
+import { Clock, Data, Effect } from "effect";
 import {
   PlanValidationError,
+  type PlanLimits,
   validateGeneratePlan,
 } from "./planValidation.js";
 import type {
@@ -18,9 +20,9 @@ import type {
   WorkflowStoreError,
 } from "./runStore.js";
 import { RunNotFoundError } from "./runStore.js";
-import type {
-  ScenarioRuntime,
+import {
   ScenarioRuntimeError,
+  type ScenarioRuntime,
 } from "./scenarioRuntime.js";
 import {
   InvalidTransitionError,
@@ -60,6 +62,20 @@ export class ChangeInspectionError {
   ) {}
 }
 
+export class JobSubmissionConflictError extends Data.TaggedError(
+  "JobSubmissionConflictError",
+)<{
+  readonly jobId: string;
+  readonly message: string;
+}> {}
+
+export class RunBudgetExceededError extends Data.TaggedError(
+  "RunBudgetExceededError",
+)<{
+  readonly runId: string;
+  readonly message: string;
+}> {}
+
 export interface ChangeInspector {
   readonly inspect: () => Effect.Effect<
     readonly Change[],
@@ -71,9 +87,11 @@ export type WorkflowError =
   | ActiveRunExistsError
   | ChangeInspectionError
   | InvalidTransitionError
+  | JobSubmissionConflictError
   | PlanValidationError
   | RunReportError
   | RunBusyError
+  | RunBudgetExceededError
   | RunNotFoundError
   | ScenarioRuntimeError
   | TurnOwnershipLostError
@@ -123,7 +141,8 @@ export const AUTOMATIC_PHASES = {
       runtime: ScenarioRuntime,
       attempt: Parameters<ScenarioRuntime["execute"]>[0],
       baseUrl: URL,
-    ) => runtime.execute(attempt, { baseUrl }),
+      timeoutMs: number,
+    ) => runtime.execute(attempt, { baseUrl, timeoutMs }),
   },
   reporting: {
     recoveryPolicy: "rerun",
@@ -154,6 +173,7 @@ const validatePendingGeneratePlan = (
   run: RunRecord,
   event: SubmitJobEvent,
   runStore: RunStore,
+  limits: PlanLimits,
 ): Effect.Effect<
   readonly import("./planValidation.js").ScenarioSubmission[],
   PlanValidationError | InvalidTransitionError | WorkflowStoreError
@@ -173,12 +193,20 @@ const validatePendingGeneratePlan = (
         }),
       );
     }
-    const validation = validateGeneratePlan(event.payload);
+    const validation = validateGeneratePlan(
+      event.payload,
+      limits,
+    );
     if (validation._tag === "Left") {
       return yield* Effect.fail(validation.left);
     }
     return validation.right;
   });
+
+const submissionHash = (payload: unknown): string =>
+  createHash("sha256")
+    .update(JSON.stringify(payload) ?? "undefined")
+    .digest("hex");
 
 const createGeneratePlanJob = (
   snapshot: MachineSnapshot,
@@ -266,12 +294,14 @@ export const makeWorkflowEngine = ({
   changeInspector,
   scenarioRuntime,
   runReporter,
+  planLimits,
   makeTurnOwner,
 }: {
   readonly runStore: RunStore;
   readonly changeInspector: ChangeInspector;
   readonly scenarioRuntime: ScenarioRuntime;
   readonly runReporter: RunReporter;
+  readonly planLimits: PlanLimits;
   readonly makeTurnOwner: () => TurnOwner;
 }): WorkflowEngine => {
   const dispatch = (
@@ -287,10 +317,28 @@ export const makeWorkflowEngine = ({
                 new RunNotFoundError({ runId }),
               );
             }
+            const hash = submissionHash(event.payload);
+            const priorSubmission =
+              yield* runStore.getJobSubmission(runId, event.jobId);
+            if (
+              priorSubmission?.status === "completed" &&
+              priorSubmission.result !== null
+            ) {
+              if (priorSubmission.submissionHash === hash) {
+                return priorSubmission.result;
+              }
+              return yield* Effect.fail(
+                new JobSubmissionConflictError({
+                  jobId: event.jobId,
+                  message: `Job ${event.jobId} was already completed with a different submission`,
+                }),
+              );
+            }
             const scenarios = yield* validatePendingGeneratePlan(
               persisted,
               event,
               runStore,
+              planLimits,
             );
             const accepted = step(persisted, event);
             if (accepted._tag === "Left") {
@@ -300,6 +348,7 @@ export const makeWorkflowEngine = ({
               lease,
               runId,
               scenarios,
+              hash,
             );
             const attempts = [];
             let evaluatedSnapshot: MachineSnapshot | undefined;
@@ -307,8 +356,22 @@ export const makeWorkflowEngine = ({
               index,
               scenario,
             ] of frozenScenarios.entries()) {
-              const attempt =
-                yield* AUTOMATIC_PHASES.executingScenarios.work(
+              const usedWork =
+                yield* runStore.getActiveWorkMs(runId);
+              const remainingWork =
+                planLimits.activeWorkBudgetMs - usedWork;
+              if (remainingWork <= 0) {
+                return yield* Effect.fail(
+                  new RunBudgetExceededError({
+                    runId,
+                    message: `Run ${runId} exhausted its active-work budget`,
+                  }),
+                );
+              }
+              const startedAt = yield* Clock.currentTimeMillis;
+              const execution =
+                yield* Effect.either(
+                  AUTOMATIC_PHASES.executingScenarios.work(
                   scenarioRuntime,
                   {
                     runId,
@@ -317,7 +380,39 @@ export const makeWorkflowEngine = ({
                     scriptVersion: 0,
                   },
                   persisted.baseUrl,
+                  Math.min(
+                    planLimits.scenarioTimeoutMs,
+                    remainingWork,
+                  ),
+                  ).pipe(
+                    Effect.timeoutFail({
+                      duration: Math.min(
+                        planLimits.scenarioTimeoutMs,
+                        remainingWork,
+                      ),
+                      onTimeout: () =>
+                        new ScenarioRuntimeError({
+                          operation: "execute Scenario",
+                          cause: new Error(
+                            `Scenario timed out after ${Math.min(
+                              planLimits.scenarioTimeoutMs,
+                              remainingWork,
+                            )}ms`,
+                          ),
+                        }),
+                    }),
+                  ),
                 );
+              const finishedAt = yield* Clock.currentTimeMillis;
+              yield* runStore.recordActiveWorkMs(
+                lease,
+                runId,
+                finishedAt - startedAt,
+              );
+              if (execution._tag === "Left") {
+                return yield* Effect.fail(execution.left);
+              }
+              const attempt = execution.right;
               attempts.push(attempt);
               const nextScenario = frozenScenarios[index + 1];
               if (nextScenario === undefined) {
@@ -353,17 +448,53 @@ export const makeWorkflowEngine = ({
             if (completed._tag === "Left") {
               return yield* Effect.fail(completed.left);
             }
-            yield* AUTOMATIC_PHASES.reporting.work(
-              runReporter,
-              runId,
-              attempts,
+            const usedWork =
+              yield* runStore.getActiveWorkMs(runId);
+            const remainingWork =
+              planLimits.activeWorkBudgetMs - usedWork;
+            if (remainingWork <= 0) {
+              return yield* Effect.fail(
+                new RunBudgetExceededError({
+                  runId,
+                  message: `Run ${runId} exhausted its active-work budget`,
+                }),
+              );
+            }
+            const reportStartedAt = yield* Clock.currentTimeMillis;
+            const reporting = yield* Effect.either(
+              AUTOMATIC_PHASES.reporting
+                .work(runReporter, runId, attempts)
+                .pipe(
+                  Effect.timeoutFail({
+                    duration: remainingWork,
+                    onTimeout: () =>
+                      new RunBudgetExceededError({
+                        runId,
+                        message: `Run ${runId} exhausted its active-work budget`,
+                      }),
+                  }),
+                ),
             );
-            yield* runStore.completePassingReport(lease, runId);
-            return {
+            const reportFinishedAt = yield* Clock.currentTimeMillis;
+            yield* runStore.recordActiveWorkMs(
+              lease,
+              runId,
+              reportFinishedAt - reportStartedAt,
+            );
+            if (reporting._tag === "Left") {
+              return yield* Effect.fail(reporting.left);
+            }
+            const result = {
               phase: "completed",
               outcome: "passed",
               attempts,
-            };
+            } as const;
+            yield* runStore.completePassingReport(
+              lease,
+              runId,
+              result,
+            );
+            return result;
           }
           if (event.type === "abandon") {
             if (persisted === null) {

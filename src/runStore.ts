@@ -8,9 +8,16 @@ import type {
 } from "./planValidation.js";
 import type {
   AttemptRecord,
+  CompletedDispatchResult,
   GeneratePlanJob,
   RunStatus,
 } from "./workflowProtocol.js";
+
+export type JobSubmissionState = {
+  readonly status: "pending" | "accepted" | "completed";
+  readonly submissionHash: string | null;
+  readonly result: CompletedDispatchResult | null;
+};
 
 export class WorkflowStoreError extends Data.TaggedError(
   "WorkflowStoreError",
@@ -92,6 +99,7 @@ export interface RunStore {
     lease: TurnLease,
     runId: RunId,
     scenarios: readonly ScenarioSubmission[],
+    submissionHash: string,
   ) => Effect.Effect<
     readonly ScenarioSubmission[],
     TurnOwnershipLostError | WorkflowStoreError
@@ -108,6 +116,25 @@ export interface RunStore {
   readonly completePassingReport: (
     lease: TurnLease,
     runId: RunId,
+    result: CompletedDispatchResult,
+  ) => Effect.Effect<
+    void,
+    TurnOwnershipLostError | WorkflowStoreError
+  >;
+  readonly getJobSubmission: (
+    runId: RunId,
+    jobId: string,
+  ) => Effect.Effect<
+    JobSubmissionState | null,
+    WorkflowStoreError
+  >;
+  readonly getActiveWorkMs: (
+    runId: RunId,
+  ) => Effect.Effect<number, WorkflowStoreError>;
+  readonly recordActiveWorkMs: (
+    lease: TurnLease,
+    runId: RunId,
+    elapsedMs: number,
   ) => Effect.Effect<
     void,
     TurnOwnershipLostError | WorkflowStoreError

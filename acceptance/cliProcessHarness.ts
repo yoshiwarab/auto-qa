@@ -23,7 +23,11 @@ export const runCliProcess = async ({
   try {
     const result = await execFileAsync(
       process.execPath,
-      [join(process.cwd(), "dist", "src", "cli.js"), ...args],
+      [
+        process.env["AUTO_QA_PACKED_CLI"] ??
+          join(process.cwd(), "dist", "src", "cli.js"),
+        ...args,
+      ],
       { cwd, env },
     );
     return { exitCode: 0, ...result };

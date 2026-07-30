@@ -1,5 +1,4 @@
 import { Data, Either } from "effect";
-import type { GeneratePlanSubmission } from "./planValidation.js";
 
 declare const RunIdType: unique symbol;
 
@@ -22,7 +21,7 @@ export type AbandonEvent = {
 export type SubmitJobEvent = {
   readonly type: "submitJob";
   readonly jobId: string;
-  readonly payload: GeneratePlanSubmission;
+  readonly payload: unknown;
 };
 
 export type ExternalEvent =

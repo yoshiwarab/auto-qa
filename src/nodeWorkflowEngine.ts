@@ -4,6 +4,10 @@ import { Effect, Scope } from "effect";
 import { openSqliteRunStore } from "./sqliteRunStore.js";
 import { makeFileRunReporter } from "./fileRunReporter.js";
 import { makePlaywrightScenarioRuntime } from "./playwrightScenarioRuntime.js";
+import {
+  DEFAULT_PLAN_LIMITS,
+  type PlanLimits,
+} from "./planValidation.js";
 import type { RunReporter } from "./runReporter.js";
 import type { ScenarioRuntime } from "./scenarioRuntime.js";
 import {
@@ -31,6 +35,7 @@ export const createWorkflowEngine = ({
   readOnly = false,
   scenarioRuntime,
   runReporter,
+  planLimits = DEFAULT_PLAN_LIMITS,
 }: {
   readonly databasePath: string;
   readonly changeInspector: ChangeInspector;
@@ -38,6 +43,7 @@ export const createWorkflowEngine = ({
   readonly readOnly?: boolean;
   readonly scenarioRuntime?: ScenarioRuntime;
   readonly runReporter?: RunReporter;
+  readonly planLimits?: PlanLimits;
 }): Effect.Effect<
   WorkflowEngine,
   WorkflowStoreError,
@@ -55,6 +61,7 @@ export const createWorkflowEngine = ({
           makePlaywrightScenarioRuntime(stateDirectory),
         runReporter:
           runReporter ?? makeFileRunReporter(stateDirectory),
+        planLimits,
         makeTurnOwner: turnOwnerFactory,
       }),
   );

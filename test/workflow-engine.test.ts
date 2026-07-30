@@ -367,6 +367,260 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
     });
   });
 
+  test("submission envelopes and Scenario count limits are decoded before acceptance", async () => {
+    const directory = await makeTemporaryDirectory();
+    const examples = [
+      {
+        payload: { schemaVersion: 2, scenarios: [] },
+        field: "schemaVersion",
+      },
+      {
+        payload: {
+          schemaVersion: 1,
+          scenarios: "not an array",
+        },
+        field: "scenarios",
+      },
+      {
+        payload: {
+          schemaVersion: 1,
+          scenarios: [
+            {
+              id: "first",
+              goal: "First Scenario",
+              preconditions: [],
+              mutates: false,
+              script: "async () => {}",
+            },
+            {
+              id: "second",
+              goal: "Second Scenario",
+              preconditions: [],
+              mutates: false,
+              script: "async () => {}",
+            },
+          ],
+        },
+        field: "scenarios",
+      },
+    ] as const;
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      for (const [index, example] of examples.entries()) {
+        const runId = RunId(`run-envelope-${index}`);
+        const databasePath = join(directory, `state-${index}.db`);
+        const rejected = await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const engine = yield* createWorkflowEngine({
+                databasePath,
+                changeInspector: {
+                  inspect: () => Effect.succeed([]),
+                },
+                scenarioRuntime:
+                  makeDeterministicScenarioRuntime(),
+                runReporter: {
+                  writePassingReport: () => Effect.void,
+                },
+                planLimits: {
+                  maxScenarios: 1,
+                  scenarioTimeoutMs: 30_000,
+                  activeWorkBudgetMs: 300_000,
+                },
+              });
+              const started = yield* engine.dispatch(runId, {
+                type: "start",
+                baseUrl,
+              });
+              const result = yield* Effect.either(
+                engine.dispatch(runId, {
+                  type: "submitJob",
+                  jobId: started.pendingJob.id,
+                  payload: example.payload,
+                }),
+              );
+              return {
+                result,
+                status: yield* engine.getStatus(runId),
+                pendingJob: yield* engine.getPendingJob(runId),
+              };
+            }),
+          ),
+        );
+
+        expect(rejected).toMatchObject({
+          result: {
+            _tag: "Left",
+            left: {
+              _tag: "PlanValidationError",
+              field: example.field,
+            },
+          },
+          status: {
+            runId,
+            phase: "awaitingAgent",
+          },
+          pendingJob: {
+            id: `${runId}:generate-plan:1`,
+          },
+        });
+      }
+    });
+  });
+
+  test("a completed Job replay is idempotent and rejects a different submission", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const runId = RunId("run-idempotent-submit");
+    const payload = {
+      schemaVersion: 1 as const,
+      scenarios: [
+        {
+          id: "account-loads",
+          goal: "Show the account",
+          preconditions: [],
+          mutates: false,
+          script: "async () => {}",
+        },
+      ],
+    };
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      const first = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine =
+              yield* createNoChangeWorkflowEngine(databasePath);
+            const started = yield* engine.dispatch(runId, {
+              type: "start",
+              baseUrl,
+            });
+            const result = yield* engine.dispatch(runId, {
+              type: "submitJob",
+              jobId: started.pendingJob.id,
+              payload,
+            });
+            return { jobId: started.pendingJob.id, result };
+          }),
+        ),
+      );
+
+      const replayed = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine =
+              yield* createNoChangeWorkflowEngine(databasePath);
+            const same = yield* engine.dispatch(runId, {
+              type: "submitJob",
+              jobId: first.jobId,
+              payload,
+            });
+            const conflict = yield* Effect.either(
+              engine.dispatch(runId, {
+                type: "submitJob",
+                jobId: first.jobId,
+                payload: {
+                  ...payload,
+                  scenarios: [
+                    {
+                      ...payload.scenarios[0],
+                      goal: "A different goal",
+                    },
+                  ],
+                },
+              }),
+            );
+            return {
+              same,
+              conflict,
+              status: yield* engine.getStatus(runId),
+              pendingJob: yield* engine.getPendingJob(runId),
+            };
+          }),
+        ),
+      );
+
+      expect(replayed.same).toEqual(first.result);
+      expect(replayed).toMatchObject({
+        conflict: {
+          _tag: "Left",
+          left: {
+            _tag: "JobSubmissionConflictError",
+            jobId: first.jobId,
+          },
+        },
+        status: {
+          runId,
+          phase: "completed",
+          outcome: "passed",
+        },
+        pendingJob: null,
+      });
+    });
+  });
+
+  test("the WorkflowEngine enforces the Scenario timeout at its host-neutral seam", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const runId = RunId("run-scenario-timeout");
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      const timedOut = await Effect.runPromise(
+        Effect.either(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const engine = yield* createWorkflowEngine({
+                databasePath,
+                changeInspector: {
+                  inspect: () => Effect.succeed([]),
+                },
+                scenarioRuntime: {
+                  execute: () => Effect.never,
+                },
+                runReporter: {
+                  writePassingReport: () => Effect.void,
+                },
+                planLimits: {
+                  maxScenarios: 1,
+                  scenarioTimeoutMs: 5,
+                  activeWorkBudgetMs: 100,
+                },
+              });
+              const started = yield* engine.dispatch(runId, {
+                type: "start",
+                baseUrl,
+              });
+              return yield* engine.dispatch(runId, {
+                type: "submitJob",
+                jobId: started.pendingJob.id,
+                payload: {
+                  schemaVersion: 1,
+                  scenarios: [
+                    {
+                      id: "never-finishes",
+                      goal: "Exercise the timeout",
+                      preconditions: [],
+                      mutates: false,
+                      script: "async () => {}",
+                    },
+                  ],
+                },
+              });
+            }),
+          ),
+        ),
+      );
+
+      expect(timedOut).toMatchObject({
+        _tag: "Left",
+        left: {
+          _tag: "ScenarioRuntimeError",
+          operation: "execute Scenario",
+        },
+      });
+    });
+  });
+
   test("a restarted engine reruns interrupted deterministic inspection", async () => {
     const directory = await makeTemporaryDirectory();
     const databasePath = join(directory, "state.db");

@@ -22,7 +22,12 @@ import {
 
 const execFileAsync = promisify(execFile);
 const projectRoot = process.cwd();
-const cliPath = join(projectRoot, "dist", "src", "cli.js");
+const cliPath = process.env["AUTO_QA_PACKED_CLI"];
+if (cliPath === undefined) {
+  throw new Error(
+    "AUTO_QA_PACKED_CLI must identify the packed CLI under test",
+  );
+}
 const temporaryDirectories: string[] = [];
 let targetApplication: Server;
 let baseUrl: URL;

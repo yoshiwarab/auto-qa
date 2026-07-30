@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 type SqliteRunStoreSchema = {
   readonly hasAbandonReason: boolean;
   readonly hasOutcome: boolean;
+  readonly hasJobCompletion: boolean;
 };
 
 const runColumns = (
@@ -18,6 +19,17 @@ const hasRunColumn = (
 ): boolean =>
   runColumns(database).some((column) => column.name === name);
 
+const hasTableColumn = (
+  database: DatabaseSync,
+  table: string,
+  name: string,
+): boolean =>
+  (
+    database
+      .prepare(`PRAGMA table_info(${table})`)
+      .all() as unknown as readonly { readonly name: string }[]
+  ).some((column) => column.name === name);
+
 export const prepareSqliteRunStoreSchema = (
   database: DatabaseSync,
   initialize: boolean,
@@ -32,7 +44,8 @@ export const prepareSqliteRunStoreSchema = (
         phase TEXT NOT NULL,
         base_url TEXT NOT NULL,
         abandon_reason TEXT,
-        outcome TEXT
+        outcome TEXT,
+        active_work_ms INTEGER NOT NULL DEFAULT 0
       ) STRICT;
 
       CREATE TABLE IF NOT EXISTS operations (
@@ -46,7 +59,10 @@ export const prepareSqliteRunStoreSchema = (
       CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY,
         run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id),
-        job_json TEXT NOT NULL
+        job_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        submission_hash TEXT,
+        result_json TEXT
       ) STRICT;
 
       CREATE TABLE IF NOT EXISTS turn_lock (
@@ -104,10 +120,35 @@ export const prepareSqliteRunStoreSchema = (
     if (!hasRunColumn(database, "outcome")) {
       database.exec("ALTER TABLE runs ADD COLUMN outcome TEXT");
     }
+    if (!hasRunColumn(database, "active_work_ms")) {
+      database.exec(
+        "ALTER TABLE runs ADD COLUMN active_work_ms INTEGER NOT NULL DEFAULT 0",
+      );
+    }
+    if (!hasTableColumn(database, "jobs", "status")) {
+      database.exec(
+        "ALTER TABLE jobs ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
+      );
+    }
+    if (!hasTableColumn(database, "jobs", "submission_hash")) {
+      database.exec(
+        "ALTER TABLE jobs ADD COLUMN submission_hash TEXT",
+      );
+    }
+    if (!hasTableColumn(database, "jobs", "result_json")) {
+      database.exec(
+        "ALTER TABLE jobs ADD COLUMN result_json TEXT",
+      );
+    }
   }
 
   return {
     hasAbandonReason: hasRunColumn(database, "abandon_reason"),
     hasOutcome: hasRunColumn(database, "outcome"),
+    hasJobCompletion: hasTableColumn(
+      database,
+      "jobs",
+      "status",
+    ),
   };
 };

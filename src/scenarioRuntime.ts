@@ -11,6 +11,7 @@ export type FrozenScenarioAttempt = {
 
 export type ScenarioEnvironment = {
   readonly baseUrl: URL;
+  readonly timeoutMs: number;
 };
 
 export class ScenarioRuntimeError extends Data.TaggedError(

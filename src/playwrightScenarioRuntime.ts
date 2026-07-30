@@ -66,6 +66,9 @@ export const makePlaywrightScenarioRuntime = (
     environment: ScenarioEnvironment,
   ) => {
     const launchToken = randomUUID();
+    const executablePath = chromium.executablePath();
+    let browserAcquired = false;
+    let browserReleased = false;
     const registryPath = join(stateDirectory, "registry.json");
     const scenarioDirectory = join(
       stateDirectory,
@@ -97,6 +100,7 @@ export const makePlaywrightScenarioRuntime = (
                     type: "browser",
                     launchToken,
                     runId: attempt.runId,
+                    executablePath,
                   },
                 ],
               })}\n`,
@@ -106,14 +110,27 @@ export const makePlaywrightScenarioRuntime = (
           const browser = yield* Effect.acquireRelease(
             Effect.uninterruptible(
               runtimeEffect("launch browser", () =>
-                chromium.launch({ headless: true }),
+                chromium.launch({
+                  headless: true,
+                  args: [
+                    `--auto-qa-launch-token=${launchToken}`,
+                  ],
+                }),
               ),
             ),
             (acquired: Browser) =>
               runtimeEffect("close browser", () =>
                 acquired.close(),
-              ).pipe(Effect.orDie),
+              ).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    browserReleased = true;
+                  }),
+                ),
+                Effect.orDie,
+              ),
           );
+          browserAcquired = true;
           const context = yield* Effect.acquireRelease(
             runtimeEffect("create browser context", () =>
               browser.newContext(),
@@ -135,6 +152,17 @@ export const makePlaywrightScenarioRuntime = (
               page,
               baseUrl: environment.baseUrl,
               expect,
+            }),
+          ).pipe(
+            Effect.timeoutFail({
+              duration: environment.timeoutMs,
+              onTimeout: () =>
+                new ScenarioRuntimeError({
+                  operation: "execute Scenario Script",
+                  cause: new Error(
+                    `Scenario timed out after ${environment.timeoutMs}ms`,
+                  ),
+                }),
             }),
           );
 
@@ -174,12 +202,18 @@ export const makePlaywrightScenarioRuntime = (
           } as const;
         }),
       ),
-      runtimeEffect("clear browser registry", async () => {
-        await rm(registryPath).catch((cause: NodeJS.ErrnoException) => {
-          if (cause.code !== "ENOENT") throw cause;
-        });
-        await syncDirectory(stateDirectory);
-      }).pipe(Effect.orDie),
+      Effect.suspend(() =>
+        !browserAcquired || browserReleased
+          ? runtimeEffect("clear browser registry", async () => {
+              await rm(registryPath).catch(
+                (cause: NodeJS.ErrnoException) => {
+                  if (cause.code !== "ENOENT") throw cause;
+                },
+              );
+              await syncDirectory(stateDirectory);
+            }).pipe(Effect.orDie)
+          : Effect.void,
+      ),
     );
   },
 });

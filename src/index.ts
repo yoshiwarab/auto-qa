@@ -7,6 +7,8 @@ export {
   type CompletedDispatchResult,
   type DispatchResult,
   type GeneratePlanJob,
+  JobSubmissionConflictError,
+  RunBudgetExceededError,
   type RunStatus,
   type WorkflowEngine,
   type WorkflowError,
@@ -24,8 +26,10 @@ export {
 } from "./deterministicScenarioRuntime.js";
 
 export {
+  DEFAULT_PLAN_LIMITS,
   PlanValidationError,
   type GeneratePlanSubmission,
+  type PlanLimits,
   type ScenarioSubmission,
 } from "./planValidation.js";
 

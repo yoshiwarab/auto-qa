@@ -1,5 +1,17 @@
 import { Data, Either } from "effect";
 
+export type PlanLimits = {
+  readonly maxScenarios: number;
+  readonly scenarioTimeoutMs: number;
+  readonly activeWorkBudgetMs: number;
+};
+
+export const DEFAULT_PLAN_LIMITS: PlanLimits = {
+  maxScenarios: 20,
+  scenarioTimeoutMs: 30_000,
+  activeWorkBudgetMs: 300_000,
+};
+
 export type ScenarioSubmission = {
   readonly id: string;
   readonly goal: string;
@@ -13,11 +25,16 @@ export type GeneratePlanSubmission = {
   readonly scenarios: readonly unknown[];
 };
 
+export type PlanValidationField =
+  | keyof ScenarioSubmission
+  | "schemaVersion"
+  | "scenarios";
+
 export class PlanValidationError extends Data.TaggedError(
   "PlanValidationError",
 )<{
   readonly scenarioId: string;
-  readonly field: keyof ScenarioSubmission;
+  readonly field: PlanValidationField;
   readonly message: string;
 }> {}
 
@@ -36,12 +53,35 @@ const asRecord = (
     : {};
 
 export const validateGeneratePlan = (
-  submission: GeneratePlanSubmission,
+  submission: unknown,
+  limits: PlanLimits = DEFAULT_PLAN_LIMITS,
 ): Either.Either<
   readonly ScenarioSubmission[],
   PlanValidationError
 > => {
-  if (submission.scenarios.length === 0) {
+  const record = asRecord(submission);
+  if (record["schemaVersion"] !== 1) {
+    return Either.left(
+      new PlanValidationError({
+        scenarioId: "<submission>",
+        field: "schemaVersion",
+        message:
+          "generate-plan submission requires schemaVersion 1",
+      }),
+    );
+  }
+  const submittedScenarios = record["scenarios"];
+  if (!Array.isArray(submittedScenarios)) {
+    return Either.left(
+      new PlanValidationError({
+        scenarioId: "<submission>",
+        field: "scenarios",
+        message:
+          "generate-plan submission requires a scenarios array",
+      }),
+    );
+  }
+  if (submittedScenarios.length === 0) {
     return Either.left(
       new PlanValidationError({
         scenarioId: "<unknown>",
@@ -50,9 +90,18 @@ export const validateGeneratePlan = (
       }),
     );
   }
+  if (submittedScenarios.length > limits.maxScenarios) {
+    return Either.left(
+      new PlanValidationError({
+        scenarioId: "<submission>",
+        field: "scenarios",
+        message: `generate-plan submission exceeds the Scenario limit of ${limits.maxScenarios}`,
+      }),
+    );
+  }
   const scenarios: ScenarioSubmission[] = [];
   const scenarioIds = new Set<string>();
-  for (const scenario of submission.scenarios) {
+  for (const scenario of submittedScenarios) {
     const candidate = asRecord(scenario);
 
     if (!("id" in candidate)) {
