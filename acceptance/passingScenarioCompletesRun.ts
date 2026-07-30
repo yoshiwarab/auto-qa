@@ -19,7 +19,7 @@ import {
   type ProcessResult,
 } from "./cliProcessHarness.js";
 import {
-  startQaLab,
+  makeQaLab,
   type QaLabProcess,
 } from "./qaLabHarness.js";
 import {
@@ -71,64 +71,65 @@ const runGit = (
 ): Promise<void> =>
   execFileAsync("git", args, { cwd }).then(() => undefined);
 
-const makeWorld = Effect.acquireRelease(
-  Effect.tryPromise(async () => {
-    const parent = join(process.cwd(), "tmp");
-    await mkdir(parent, { recursive: true });
-    const worktree = await mkdtemp(
-      join(parent, "acceptance-passing-browser-"),
-    );
-    await runGit(worktree, ["init"]);
-    await runGit(worktree, [
-      "config",
-      "user.email",
-      "auto-qa@example.invalid",
-    ]);
-    await runGit(worktree, [
-      "config",
-      "user.name",
-      "Auto QA Harness",
-    ]);
-    await writeFile(
-      join(worktree, "account.tsx"),
-      "export const heading = 'Baseline';\n",
-    );
-    await runGit(worktree, ["add", "."]);
-    await runGit(worktree, [
-      "commit",
-      "-m",
-      "Committed baseline",
-    ]);
-    await writeFile(
-      join(worktree, "account.tsx"),
-      "export const heading = 'Account';\n",
-    );
-
-    const targetApplication = await startQaLab(process.cwd());
-    const world = {
-      worktree,
-      targetApplication,
-      baseUrl: targetApplication.baseUrl,
-      submissionPath: join(
-        parent,
-        `acceptance-plan-${Date.now()}.json`,
-      ),
-    } satisfies World;
-    return world;
-  }),
-  (world) =>
+const makeWorld = Effect.gen(function* () {
+  const targetApplication = yield* makeQaLab(process.cwd());
+  return yield* Effect.acquireRelease(
     Effect.tryPromise(async () => {
-      await world.targetApplication.stop();
-      await Promise.all([
-        rm(world.worktree, { recursive: true }),
-        rm(world.submissionPath).catch(
-          (cause: NodeJS.ErrnoException) => {
-            if (cause.code !== "ENOENT") throw cause;
-          },
-        ),
+      const parent = join(process.cwd(), "tmp");
+      await mkdir(parent, { recursive: true });
+      const worktree = await mkdtemp(
+        join(parent, "acceptance-passing-browser-"),
+      );
+      await runGit(worktree, ["init"]);
+      await runGit(worktree, [
+        "config",
+        "user.email",
+        "auto-qa@example.invalid",
       ]);
-    }).pipe(Effect.orDie),
-);
+      await runGit(worktree, [
+        "config",
+        "user.name",
+        "Auto QA Harness",
+      ]);
+      await writeFile(
+        join(worktree, "account.tsx"),
+        "export const heading = 'Baseline';\n",
+      );
+      await runGit(worktree, ["add", "."]);
+      await runGit(worktree, [
+        "commit",
+        "-m",
+        "Committed baseline",
+      ]);
+      await writeFile(
+        join(worktree, "account.tsx"),
+        "export const heading = 'Account';\n",
+      );
+
+      const world = {
+        worktree,
+        targetApplication,
+        baseUrl: targetApplication.baseUrl,
+        submissionPath: join(
+          parent,
+          "acceptance-plan.json",
+        ),
+      } satisfies World;
+      return world;
+    }),
+    (world) =>
+      Effect.tryPromise(async () => {
+        await Promise.all([
+          rm(world.worktree, { recursive: true }),
+          rm(world.submissionPath).catch(
+            (cause: NodeJS.ErrnoException) => {
+              if (cause.code !== "ENOENT") throw cause;
+            },
+          ),
+        ]);
+      }).pipe(Effect.orDie),
+  );
+});
 
 const runCli = (
   world: World,

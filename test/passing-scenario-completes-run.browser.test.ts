@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { Effect, Exit, Scope } from "effect";
 import {
   afterAll,
   afterEach,
@@ -19,7 +20,7 @@ import {
   test,
 } from "vitest";
 import {
-  startQaLab,
+  makeQaLab,
   type QaLabProcess,
 } from "../acceptance/qaLabHarness.js";
 
@@ -33,6 +34,7 @@ if (cliPath === undefined) {
 }
 const temporaryDirectories: string[] = [];
 let targetApplication: QaLabProcess | undefined;
+let targetApplicationScope: Scope.CloseableScope | undefined;
 let baseUrl: URL;
 
 type ProcessResult = {
@@ -150,7 +152,15 @@ const makeChangedWorktree = async (): Promise<string> => {
 };
 
 beforeAll(async () => {
-  targetApplication = await startQaLab(projectRoot);
+  targetApplicationScope = Effect.runSync(Scope.make());
+  targetApplication = await Effect.runPromise(
+    makeQaLab(projectRoot).pipe(
+      Effect.provideService(
+        Scope.Scope,
+        targetApplicationScope,
+      ),
+    ),
+  );
   baseUrl = targetApplication.baseUrl;
 });
 
@@ -163,7 +173,11 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  await targetApplication?.stop();
+  if (targetApplicationScope !== undefined) {
+    await Effect.runPromise(
+      Scope.close(targetApplicationScope, Exit.void),
+    );
+  }
 });
 
 test(
