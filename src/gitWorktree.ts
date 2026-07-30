@@ -22,7 +22,11 @@ export const findGitWorktree = (
     const child = execFile(
       "git",
       ["rev-parse", "--show-toplevel"],
-      { cwd: directory, encoding: "utf8" },
+      {
+        cwd: directory,
+        encoding: "utf8",
+        env: { ...process.env, LC_ALL: "C" },
+      },
       (error, stdout, stderr) => {
         resume(
           error === null

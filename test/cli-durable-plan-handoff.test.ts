@@ -325,32 +325,44 @@ describe("CLI durable generate-plan handoff", () => {
     expect(targetApplicationRequestCount).toBe(0);
   });
 
-  test("Git tool failures remain change inspection errors", async () => {
-    const worktree = await makeTemporaryGitWorktree();
-    targetApplicationRequestCount = 0;
-    const result = await runCli(
-      worktree,
-      ["start", "--base-url", baseUrl.href],
-      {
-        environment: { ...process.env, PATH: "" },
-      },
-    );
+  test.each([
+    {
+      failure: "executable lookup",
+      environment: { PATH: "" },
+    },
+    {
+      failure: "configuration parsing",
+      environment: { GIT_CONFIG_COUNT: "1" },
+    },
+  ])(
+    "Git $failure failures remain change inspection errors",
+    async ({ environment }) => {
+      const worktree = await makeTemporaryGitWorktree();
+      targetApplicationRequestCount = 0;
+      const result = await runCli(
+        worktree,
+        ["start", "--base-url", baseUrl.href],
+        {
+          environment: { ...process.env, ...environment },
+        },
+      );
 
-    expect(result).toMatchObject({ exitCode: 1, stderr: "" });
-    expect(parseOnlyJsonLine(result.stdout)).toMatchObject({
-      schemaVersion: 1,
-      correlationId: expect.any(String),
-      ok: false,
-      error: {
-        code: "ChangeInspectionError",
-        message: "Auto-QA command failed",
-      },
-    });
-    await expect(
-      pathExists(join(worktree, ".auto-qa")),
-    ).resolves.toBe(false);
-    expect(targetApplicationRequestCount).toBe(0);
-  });
+      expect(result).toMatchObject({ exitCode: 1, stderr: "" });
+      expect(parseOnlyJsonLine(result.stdout)).toMatchObject({
+        schemaVersion: 1,
+        correlationId: expect.any(String),
+        ok: false,
+        error: {
+          code: "ChangeInspectionError",
+          message: "Auto-QA command failed",
+        },
+      });
+      await expect(
+        pathExists(join(worktree, ".auto-qa")),
+      ).resolves.toBe(false);
+      expect(targetApplicationRequestCount).toBe(0);
+    },
+  );
 
   test("a second start identifies the active Run without replacing it", async () => {
     const worktree = await makeTemporaryGitWorktree();
