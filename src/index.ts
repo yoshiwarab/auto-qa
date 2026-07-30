@@ -20,6 +20,10 @@ export {
 } from "./scenarioRuntime.js";
 
 export {
+  makeDeterministicScenarioRuntime,
+} from "./deterministicScenarioRuntime.js";
+
+export {
   PlanValidationError,
   type GeneratePlanSubmission,
   type ScenarioSubmission,

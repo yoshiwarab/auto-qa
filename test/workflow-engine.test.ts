@@ -9,6 +9,7 @@ import {
   ChangeInspectionError,
   type ChangeInspector,
   InvalidTransitionError,
+  makeDeterministicScenarioRuntime,
   RunId,
   RunBusyError,
   RunNotFoundError,
@@ -65,16 +66,7 @@ const createNoChangeWorkflowEngine = (
       inspect: () => Effect.succeed([]),
     },
     readOnly,
-    scenarioRuntime: {
-      execute: (attempt) =>
-        Effect.succeed({
-          scenarioId: attempt.scenario.id,
-          attemptNumber: attempt.attemptNumber,
-          scriptVersion: attempt.scriptVersion,
-          status: "passed",
-          evidencePath: `runs/${attempt.runId}/scenarios/${attempt.scenario.id}/attempt-1`,
-        }),
-    },
+    scenarioRuntime: makeDeterministicScenarioRuntime(),
     runReporter: {
       writePassingReport: () => Effect.void,
     },

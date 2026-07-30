@@ -10,9 +10,9 @@ import {
   chromium,
   type Browser,
   type BrowserContext,
-  type Locator,
   type Page,
 } from "playwright";
+import { expect } from "playwright/test";
 import {
   ScenarioRuntimeError,
   type FrozenScenarioAttempt,
@@ -27,16 +27,8 @@ import {
 type ScenarioScript = (context: {
   readonly page: Page;
   readonly baseUrl: URL;
-  readonly expect: (
-    locator: Locator,
-  ) => {
-    readonly toBeVisible: () => Promise<void>;
-  };
+  readonly expect: typeof expect;
 }) => Promise<void>;
-
-const scenarioExpect = (locator: Locator) => ({
-  toBeVisible: () => locator.waitFor({ state: "visible" }),
-});
 
 const runtimeEffect = <Result>(
   operation: string,
@@ -112,8 +104,10 @@ export const makePlaywrightScenarioRuntime = (
             await syncDirectory(stateDirectory);
           });
           const browser = yield* Effect.acquireRelease(
-            runtimeEffect("launch browser", () =>
-              chromium.launch({ headless: true }),
+            Effect.uninterruptible(
+              runtimeEffect("launch browser", () =>
+                chromium.launch({ headless: true }),
+              ),
             ),
             (acquired: Browser) =>
               runtimeEffect("close browser", () =>
@@ -140,7 +134,7 @@ export const makePlaywrightScenarioRuntime = (
             script({
               page,
               baseUrl: environment.baseUrl,
-              expect: scenarioExpect,
+              expect,
             }),
           );
 
