@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import {
   access,
@@ -41,6 +42,7 @@ type ProcessResult = {
 const runCli = async (
   worktree: string,
   args: readonly string[],
+  secretCanary: string,
 ): Promise<ProcessResult> => {
   try {
     const result = await execFileAsync(
@@ -50,6 +52,7 @@ const runCli = async (
         cwd: worktree,
         env: {
           ...process.env,
+          AUTO_QA_SECRET_CANARY: secretCanary,
           PLAYWRIGHT_BROWSERS_PATH: join(
             projectRoot,
             "tmp",
@@ -177,11 +180,14 @@ test(
   "one passing Scenario completes the Run with durable evidence",
   async () => {
     const worktree = await makeChangedWorktree();
+    const secretCanary = `auto-qa-secret-canary-${randomUUID()}`;
+    const processOutput: string[] = [];
     const start = await runCli(worktree, [
       "start",
       "--base-url",
       baseUrl.href,
-    ]);
+    ], secretCanary);
+    processOutput.push(start.stdout, start.stderr);
     const started = parseEnvelope(start);
     expect(start).toMatchObject({ exitCode: 0 });
     const job = started.result.job;
@@ -218,7 +224,8 @@ test(
       job?.id ?? "",
       "--file",
       submissionPath,
-    ]);
+    ], secretCanary);
+    processOutput.push(submit.stdout, submit.stderr);
     const submitted = parseEnvelope(submit);
     expect(submit).toMatchObject({ exitCode: 0 });
     expect(submitted.result).toMatchObject({
@@ -234,18 +241,20 @@ test(
       ],
     });
 
-    const observedJob = parseEnvelope(
-      await runCli(worktree, [
-        "job",
-        started.result.runId,
-      ]),
+    const jobStatus = await runCli(
+      worktree,
+      ["job", started.result.runId],
+      secretCanary,
     );
-    const observedStatus = parseEnvelope(
-      await runCli(worktree, [
-        "status",
-        started.result.runId,
-      ]),
+    processOutput.push(jobStatus.stdout, jobStatus.stderr);
+    const observedJob = parseEnvelope(jobStatus);
+    const runStatus = await runCli(
+      worktree,
+      ["status", started.result.runId],
+      secretCanary,
     );
+    processOutput.push(runStatus.stdout, runStatus.stderr);
+    const observedStatus = parseEnvelope(runStatus);
     expect(observedJob.result).toMatchObject({
       phase: "completed",
       job: null,
@@ -268,16 +277,20 @@ test(
       "account-loads",
       "attempt-1",
     );
-    const manifest = JSON.parse(
-      await readFile(join(attemptDirectory, "manifest.json"), "utf8"),
+    const manifestText = await readFile(
+      join(attemptDirectory, "manifest.json"),
+      "utf8",
     );
+    const manifest = JSON.parse(manifestText);
     expect(manifest).toEqual({
       schemaVersion: 1,
       files: ["result.json"],
     });
-    const result = JSON.parse(
-      await readFile(join(attemptDirectory, "result.json"), "utf8"),
+    const resultText = await readFile(
+      join(attemptDirectory, "result.json"),
+      "utf8",
     );
+    const result = JSON.parse(resultText);
     expect(result).toMatchObject({
       scenarioId: "account-loads",
       attemptNumber: 1,
@@ -287,11 +300,25 @@ test(
     await expect(
       readdir(join(runDirectory, "scenarios", "account-loads")),
     ).resolves.toEqual(["attempt-1"]);
-    await expect(
-      readFile(join(runDirectory, "report.md"), "utf8"),
-    ).resolves.toContain(
+    const reportText = await readFile(
+      join(runDirectory, "report.md"),
+      "utf8",
+    );
+    expect(reportText).toContain(
       "Run Outcome: passed\n\n- account-loads: Attempt 1, Script Version 0, passed",
     );
+    const persistedState = await readFile(
+      join(worktree, ".auto-qa", "state.db"),
+    );
+    expect(
+      [
+        ...processOutput,
+        manifestText,
+        resultText,
+        reportText,
+        persistedState.toString("utf8"),
+      ].join("\n"),
+    ).not.toContain(secretCanary);
     await expect(
       access(join(worktree, ".auto-qa", "registry.json")),
     ).rejects.toThrow();

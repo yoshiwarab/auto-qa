@@ -227,6 +227,7 @@ const runChangeInspection = (
   lease: TurnLease,
   runStore: RunStore,
   changeInspector: ChangeInspector,
+  planLimits: PlanLimits,
 ): Effect.Effect<AwaitingAgentDispatchResult, WorkflowError> =>
   Effect.gen(function* () {
     if (initialSnapshot.phase !== "inspectingChanges") {
@@ -238,10 +239,44 @@ const runChangeInspection = (
         }),
       );
     }
-    const result = yield* AUTOMATIC_PHASES.inspectingChanges.work(
-      initialSnapshot,
-      changeInspector,
+    const usedWork = yield* runStore.getActiveWorkMs(
+      initialSnapshot.runId,
     );
+    const remainingWork =
+      planLimits.activeWorkBudgetMs - usedWork;
+    if (remainingWork <= 0) {
+      return yield* Effect.fail(
+        new RunBudgetExceededError({
+          runId: initialSnapshot.runId,
+          message: `Run ${initialSnapshot.runId} exhausted its active-work budget`,
+        }),
+      );
+    }
+    const startedAt = yield* Clock.currentTimeMillis;
+    const inspection = yield* Effect.either(
+      AUTOMATIC_PHASES.inspectingChanges
+        .work(initialSnapshot, changeInspector)
+        .pipe(
+          Effect.timeoutFail({
+            duration: remainingWork,
+            onTimeout: () =>
+              new RunBudgetExceededError({
+                runId: initialSnapshot.runId,
+                message: `Run ${initialSnapshot.runId} exhausted its active-work budget`,
+              }),
+          }),
+        ),
+    );
+    const finishedAt = yield* Clock.currentTimeMillis;
+    yield* runStore.recordActiveWorkMs(
+      lease,
+      initialSnapshot.runId,
+      finishedAt - startedAt,
+    );
+    if (inspection._tag === "Left") {
+      return yield* Effect.fail(inspection.left);
+    }
+    const result = inspection.right;
     const transition = step(initialSnapshot, result.event);
     const next =
       transition._tag === "Left"
@@ -334,22 +369,68 @@ export const makeWorkflowEngine = ({
                 }),
               );
             }
-            const scenarios = yield* validatePendingGeneratePlan(
-              persisted,
-              event,
-              runStore,
-              planLimits,
-            );
-            const accepted = step(persisted, event);
-            if (accepted._tag === "Left") {
-              return yield* Effect.fail(accepted.left);
+            const usedBeforeAcceptance =
+              yield* runStore.getActiveWorkMs(runId);
+            const acceptanceBudget =
+              planLimits.activeWorkBudgetMs -
+              usedBeforeAcceptance;
+            if (acceptanceBudget <= 0) {
+              return yield* Effect.fail(
+                new RunBudgetExceededError({
+                  runId,
+                  message: `Run ${runId} exhausted its active-work budget`,
+                }),
+              );
             }
-            const frozenScenarios = yield* runStore.acceptPlan(
+            const acceptanceStartedAt =
+              yield* Clock.currentTimeMillis;
+            const acceptance = yield* Effect.either(
+              Effect.gen(function* () {
+                const scenarios =
+                  yield* validatePendingGeneratePlan(
+                    persisted,
+                    event,
+                    runStore,
+                    planLimits,
+                  );
+                const accepted = step(persisted, event);
+                if (accepted._tag === "Left") {
+                  return yield* Effect.fail(accepted.left);
+                }
+                const frozenScenarios =
+                  yield* runStore.acceptPlan(
+                    lease,
+                    runId,
+                    scenarios,
+                    hash,
+                  );
+                return {
+                  accepted: accepted.right,
+                  frozenScenarios,
+                };
+              }).pipe(
+                Effect.timeoutFail({
+                  duration: acceptanceBudget,
+                  onTimeout: () =>
+                    new RunBudgetExceededError({
+                      runId,
+                      message: `Run ${runId} exhausted its active-work budget`,
+                    }),
+                }),
+              ),
+            );
+            const acceptanceFinishedAt =
+              yield* Clock.currentTimeMillis;
+            yield* runStore.recordActiveWorkMs(
               lease,
               runId,
-              scenarios,
-              hash,
+              acceptanceFinishedAt - acceptanceStartedAt,
             );
+            if (acceptance._tag === "Left") {
+              return yield* Effect.fail(acceptance.left);
+            }
+            const { accepted, frozenScenarios } =
+              acceptance.right;
             const attempts = [];
             let evaluatedSnapshot: MachineSnapshot | undefined;
             for (const [
@@ -416,7 +497,7 @@ export const makeWorkflowEngine = ({
               attempts.push(attempt);
               const nextScenario = frozenScenarios[index + 1];
               if (nextScenario === undefined) {
-                const evaluated = step(accepted.right, {
+                const evaluated = step(accepted, {
                   type: "scenarioBatchCompleted",
                 });
                 if (evaluated._tag === "Left") {
@@ -434,10 +515,10 @@ export const makeWorkflowEngine = ({
             if (evaluatedSnapshot === undefined) {
               return yield* Effect.fail(
                 new InvalidTransitionError({
-                  phase: accepted.right.phase,
+                  phase: accepted.phase,
                   event: "scenarioBatchCompleted",
                   allowedEvents: allowedEvents(
-                    accepted.right.phase,
+                    accepted.phase,
                   ),
                 }),
               );
@@ -541,6 +622,7 @@ export const makeWorkflowEngine = ({
             lease,
             runStore,
             changeInspector,
+            planLimits,
           );
         }),
     );
