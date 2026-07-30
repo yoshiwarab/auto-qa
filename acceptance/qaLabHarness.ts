@@ -14,12 +14,16 @@ const hasStopped = (child: ChildProcess): boolean =>
 const stopChild = async (child: ChildProcess): Promise<void> => {
   if (hasStopped(child)) return;
   await new Promise<void>((resolve, reject) => {
-    const finish = (): void => {
+    const removeListeners = (): void => {
+      child.off("exit", finish);
       child.off("error", fail);
+    };
+    const finish = (): void => {
+      removeListeners();
       resolve();
     };
     const fail = (cause: Error): void => {
-      child.off("exit", finish);
+      removeListeners();
       reject(cause);
     };
     child.once("exit", finish);
@@ -77,7 +81,7 @@ export const startQaLab = async (
 ): Promise<QaLabProcess> => {
   const port = await reserveEphemeralPort();
   const baseUrl = new URL(`http://127.0.0.1:${port}`);
-  const chunks: string[] = [];
+  const processOutput: string[] = [];
   const child = spawn(
     process.execPath,
     [
@@ -102,14 +106,17 @@ export const startQaLab = async (
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
-  child.stdout?.on("data", (chunk: Buffer) => {
-    chunks.push(chunk.toString("utf8"));
-  });
-  child.stderr?.on("data", (chunk: Buffer) => {
-    chunks.push(chunk.toString("utf8"));
-  });
+  const captureOutput = (chunk: Buffer): void => {
+    processOutput.push(chunk.toString("utf8"));
+  };
+  child.stdout?.on("data", captureOutput);
+  child.stderr?.on("data", captureOutput);
   try {
-    await waitUntilReachable(child, baseUrl, () => chunks.join(""));
+    await waitUntilReachable(
+      child,
+      baseUrl,
+      () => processOutput.join(""),
+    );
   } catch (cause) {
     await stopChild(child);
     throw cause;
