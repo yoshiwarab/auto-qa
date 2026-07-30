@@ -279,6 +279,53 @@ describe("CLI durable generate-plan handoff", () => {
     ).resolves.toBe(false);
   });
 
+  test("start outside Git fails before creating durable state", async () => {
+    const directory = await mkdtemp(
+      join(projectRoot, "tmp", "non-git-directory-"),
+    );
+    temporaryDirectories.push(directory);
+    let result: ProcessResult;
+    try {
+      const processResult = await execFileAsync(
+        process.execPath,
+        [cliPath, "start", "--base-url", baseUrl.href],
+        {
+          cwd: directory,
+          env: {
+            ...process.env,
+            GIT_CEILING_DIRECTORIES: projectRoot,
+          },
+        },
+      );
+      result = { exitCode: 0, ...processResult };
+    } catch (cause) {
+      const failure = cause as {
+        readonly code?: number;
+        readonly stdout?: string;
+        readonly stderr?: string;
+      };
+      result = {
+        exitCode: failure.code ?? 1,
+        stdout: failure.stdout ?? "",
+        stderr: failure.stderr ?? "",
+      };
+    }
+
+    expect(result).toMatchObject({ exitCode: 1, stderr: "" });
+    expect(parseOnlyJsonLine(result.stdout)).toMatchObject({
+      schemaVersion: 1,
+      correlationId: expect.any(String),
+      ok: false,
+      error: {
+        code: "GitWorktreeRequiredError",
+        message: "Auto-QA must run inside a Git worktree",
+      },
+    });
+    await expect(
+      pathExists(join(directory, ".auto-qa")),
+    ).resolves.toBe(false);
+  });
+
   test("a second start identifies the active Run without replacing it", async () => {
     const worktree = await makeTemporaryGitWorktree();
     const first = await runCli(worktree, [

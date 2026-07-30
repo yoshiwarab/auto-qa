@@ -20,6 +20,7 @@ for stem in durable-generate-plan-handoff \
   cli-durable-generate-plan-handoff \
   cli-one-active-run-per-worktree \
   cli-abandon-active-run \
+  cli-requires-git-worktree \
   workflow-engine-fenced-turn; do
   feature="$project_root/features/$stem.feature"
   ir="$project_root/build/acceptance/ir/$stem.json"

@@ -31,6 +31,11 @@ export const generateDurablePlanEntrypoint = async (
           module: "workflowFencedTurn",
           name: "workflowFencedTurn",
         }
+      : stem === "cli-requires-git-worktree"
+      ? {
+          module: "cliRequiresGitWorktree",
+          name: "cliRequiresGitWorktree",
+        }
       : stem.startsWith("cli-")
       ? {
           module: "cliDurableGeneratePlanHandoff",

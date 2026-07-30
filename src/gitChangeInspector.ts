@@ -1,10 +1,17 @@
 import { execFile } from "node:child_process";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 import {
   ChangeInspectionError,
   type ChangeInspector,
 } from "./workflowEngine.js";
 import type { Change } from "./workflowProtocol.js";
+
+export class GitWorktreeRequiredError extends Data.TaggedError(
+  "GitWorktreeRequiredError",
+)<{
+  readonly message: "Auto-QA must run inside a Git worktree";
+  readonly cause: unknown;
+}> {}
 
 const inspectGitStatus = (
   worktree: string,
@@ -40,8 +47,8 @@ const inspectGitStatus = (
 
 export const findGitWorktree = (
   directory: string,
-): Effect.Effect<string, ChangeInspectionError> =>
-  Effect.async<string, ChangeInspectionError>((resume) => {
+): Effect.Effect<string, GitWorktreeRequiredError> =>
+  Effect.async<string, GitWorktreeRequiredError>((resume) => {
     const child = execFile(
       "git",
       ["rev-parse", "--show-toplevel"],
@@ -51,10 +58,11 @@ export const findGitWorktree = (
           error === null
             ? Effect.succeed(stdout.trim())
             : Effect.fail(
-                new ChangeInspectionError(
-                  "Auto-QA must run inside a Git worktree",
-                  error,
-                ),
+                new GitWorktreeRequiredError({
+                  message:
+                    "Auto-QA must run inside a Git worktree",
+                  cause: error,
+                }),
               ),
         );
       },
