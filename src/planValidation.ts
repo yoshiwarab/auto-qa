@@ -1,4 +1,5 @@
 import { Data, Either } from "effect";
+import { compileScenarioScript } from "./scenarioScript.js";
 
 export type PlanLimits = {
   readonly maxScenarios: number;
@@ -188,12 +189,7 @@ export const validateGeneratePlan = (
       );
     }
     try {
-      const compiled = Function(
-        `"use strict"; return (${candidate["script"]});`,
-      )();
-      if (typeof compiled !== "function") {
-        throw new Error("Scenario Script is not a function");
-      }
+      compileScenarioScript(candidate["script"]);
     } catch {
       return Either.left(
         new PlanValidationError({

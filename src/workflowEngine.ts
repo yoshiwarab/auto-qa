@@ -36,6 +36,7 @@ import {
   type SubmitJobEvent,
 } from "./workflowMachine.js";
 import type {
+  AttemptRecord,
   AwaitingAgentDispatchResult,
   Change,
   CompletedDispatchResult,
@@ -75,6 +76,14 @@ export class RunBudgetExceededError extends Data.TaggedError(
   readonly runId: string;
   readonly message: string;
 }> {}
+
+const activeWorkBudgetExceeded = (
+  runId: RunId,
+): RunBudgetExceededError =>
+  new RunBudgetExceededError({
+    runId,
+    message: `Run ${runId} exhausted its active-work budget`,
+  });
 
 export interface ChangeInspector {
   readonly inspect: () => Effect.Effect<
@@ -239,6 +248,62 @@ const createGeneratePlanJob = (
   },
 });
 
+const getRemainingActiveWorkMs = (
+  runId: RunId,
+  activeWorkBudgetMs: number,
+  runStore: RunStore,
+) =>
+  Effect.gen(function* () {
+    const usedWork = yield* runStore.getActiveWorkMs(runId);
+    const remainingWork = activeWorkBudgetMs - usedWork;
+    if (remainingWork <= 0) {
+      return yield* Effect.fail(
+        activeWorkBudgetExceeded(runId),
+      );
+    }
+    return remainingWork;
+  });
+
+const runWithinActiveWorkBudget = <
+  Result,
+  Failure,
+  Requirements,
+>(
+  lease: TurnLease,
+  runId: RunId,
+  activeWorkBudgetMs: number,
+  runStore: RunStore,
+  work: (
+    remainingWorkMs: number,
+  ) => Effect.Effect<Result, Failure, Requirements>,
+) =>
+  Effect.gen(function* () {
+    const remainingWork = yield* getRemainingActiveWorkMs(
+      runId,
+      activeWorkBudgetMs,
+      runStore,
+    );
+    const startedAt = yield* Clock.currentTimeMillis;
+    const result = yield* Effect.either(
+      work(remainingWork).pipe(
+        Effect.timeoutFail({
+          duration: remainingWork,
+          onTimeout: () => activeWorkBudgetExceeded(runId),
+        }),
+      ),
+    );
+    const finishedAt = yield* Clock.currentTimeMillis;
+    yield* runStore.recordActiveWorkMs(
+      lease,
+      runId,
+      finishedAt - startedAt,
+    );
+    if (result._tag === "Left") {
+      return yield* Effect.fail(result.left);
+    }
+    return result.right;
+  });
+
 const runChangeInspection = (
   initialSnapshot: MachineSnapshot,
   lease: TurnLease,
@@ -256,44 +321,17 @@ const runChangeInspection = (
         }),
       );
     }
-    const usedWork = yield* runStore.getActiveWorkMs(
-      initialSnapshot.runId,
-    );
-    const remainingWork =
-      planLimits.activeWorkBudgetMs - usedWork;
-    if (remainingWork <= 0) {
-      return yield* Effect.fail(
-        new RunBudgetExceededError({
-          runId: initialSnapshot.runId,
-          message: `Run ${initialSnapshot.runId} exhausted its active-work budget`,
-        }),
-      );
-    }
-    const startedAt = yield* Clock.currentTimeMillis;
-    const inspection = yield* Effect.either(
-      AUTOMATIC_PHASES.inspectingChanges
-        .work(initialSnapshot, changeInspector)
-        .pipe(
-          Effect.timeoutFail({
-            duration: remainingWork,
-            onTimeout: () =>
-              new RunBudgetExceededError({
-                runId: initialSnapshot.runId,
-                message: `Run ${initialSnapshot.runId} exhausted its active-work budget`,
-              }),
-          }),
-        ),
-    );
-    const finishedAt = yield* Clock.currentTimeMillis;
-    yield* runStore.recordActiveWorkMs(
+    const result = yield* runWithinActiveWorkBudget(
       lease,
       initialSnapshot.runId,
-      finishedAt - startedAt,
+      planLimits.activeWorkBudgetMs,
+      runStore,
+      () =>
+        AUTOMATIC_PHASES.inspectingChanges.work(
+          initialSnapshot,
+          changeInspector,
+        ),
     );
-    if (inspection._tag === "Left") {
-      return yield* Effect.fail(inspection.left);
-    }
-    const result = inspection.right;
     const transition = step(initialSnapshot, result.event);
     const next =
       transition._tag === "Left"
@@ -387,86 +425,50 @@ export const makeWorkflowEngine = ({
                 }),
               );
             }
-            const usedBeforeAcceptance =
-              yield* runStore.getActiveWorkMs(runId);
-            const acceptanceBudget =
-              runLimits.activeWorkBudgetMs -
-              usedBeforeAcceptance;
-            if (acceptanceBudget <= 0) {
-              return yield* Effect.fail(
-                new RunBudgetExceededError({
-                  runId,
-                  message: `Run ${runId} exhausted its active-work budget`,
-                }),
-              );
-            }
-            const acceptanceStartedAt =
-              yield* Clock.currentTimeMillis;
-            const acceptance = yield* Effect.either(
-              Effect.gen(function* () {
-                const scenarios =
-                  yield* validatePendingGeneratePlan(
-                    persisted,
-                    event,
-                    runStore,
-                    runLimits,
-                  );
-                const accepted = step(persisted, event);
-                if (accepted._tag === "Left") {
-                  return yield* Effect.fail(accepted.left);
-                }
-                const frozenScenarios =
-                  yield* runStore.acceptPlan(
-                    lease,
-                    runId,
-                    scenarios,
-                    hash,
-                  );
-                return {
-                  accepted: accepted.right,
-                  frozenScenarios,
-                };
-              }).pipe(
-                Effect.timeoutFail({
-                  duration: acceptanceBudget,
-                  onTimeout: () =>
-                    new RunBudgetExceededError({
-                      runId,
-                      message: `Run ${runId} exhausted its active-work budget`,
-                    }),
-                }),
-              ),
-            );
-            const acceptanceFinishedAt =
-              yield* Clock.currentTimeMillis;
-            yield* runStore.recordActiveWorkMs(
-              lease,
-              runId,
-              acceptanceFinishedAt - acceptanceStartedAt,
-            );
-            if (acceptance._tag === "Left") {
-              return yield* Effect.fail(acceptance.left);
-            }
             const { accepted, frozenScenarios } =
-              acceptance.right;
-            const attempts = [];
+              yield* runWithinActiveWorkBudget(
+                lease,
+                runId,
+                runLimits.activeWorkBudgetMs,
+                runStore,
+                () =>
+                  Effect.gen(function* () {
+                    const scenarios =
+                      yield* validatePendingGeneratePlan(
+                        persisted,
+                        event,
+                        runStore,
+                        runLimits,
+                      );
+                    const accepted = step(persisted, event);
+                    if (accepted._tag === "Left") {
+                      return yield* Effect.fail(accepted.left);
+                    }
+                    const frozenScenarios =
+                      yield* runStore.acceptPlan(
+                        lease,
+                        runId,
+                        scenarios,
+                        hash,
+                      );
+                    return {
+                      accepted: accepted.right,
+                      frozenScenarios,
+                    };
+                  }),
+              );
+            const attempts: AttemptRecord[] = [];
             let evaluatedSnapshot: MachineSnapshot | undefined;
             for (const [
               index,
               scenario,
             ] of frozenScenarios.entries()) {
-              const usedWork =
-                yield* runStore.getActiveWorkMs(runId);
               const remainingWork =
-                    runLimits.activeWorkBudgetMs - usedWork;
-              if (remainingWork <= 0) {
-                return yield* Effect.fail(
-                  new RunBudgetExceededError({
-                    runId,
-                    message: `Run ${runId} exhausted its active-work budget`,
-                  }),
+                yield* getRemainingActiveWorkMs(
+                  runId,
+                  runLimits.activeWorkBudgetMs,
+                  runStore,
                 );
-              }
               const startedAt = yield* Clock.currentTimeMillis;
               let activeWorkCheckpointMs: number | undefined;
               const scenarioLimitIsBinding =
@@ -501,10 +503,7 @@ export const makeWorkflowEngine = ({
                                 `Scenario timed out after ${effectiveTimeout}ms`,
                               ),
                             })
-                          : new RunBudgetExceededError({
-                              runId,
-                              message: `Run ${runId} exhausted its active-work budget`,
-                            }),
+                          : activeWorkBudgetExceeded(runId),
                     }),
                   ),
                 );
@@ -553,42 +552,18 @@ export const makeWorkflowEngine = ({
             if (completed._tag === "Left") {
               return yield* Effect.fail(completed.left);
             }
-            const usedWork =
-              yield* runStore.getActiveWorkMs(runId);
-            const remainingWork =
-              runLimits.activeWorkBudgetMs - usedWork;
-            if (remainingWork <= 0) {
-              return yield* Effect.fail(
-                new RunBudgetExceededError({
-                  runId,
-                  message: `Run ${runId} exhausted its active-work budget`,
-                }),
-              );
-            }
-            const reportStartedAt = yield* Clock.currentTimeMillis;
-            const reporting = yield* Effect.either(
-              AUTOMATIC_PHASES.reporting
-                .work(runReporter, runId, attempts)
-                .pipe(
-                  Effect.timeoutFail({
-                    duration: remainingWork,
-                    onTimeout: () =>
-                      new RunBudgetExceededError({
-                        runId,
-                        message: `Run ${runId} exhausted its active-work budget`,
-                      }),
-                  }),
-                ),
-            );
-            const reportFinishedAt = yield* Clock.currentTimeMillis;
-            yield* runStore.recordActiveWorkMs(
+            yield* runWithinActiveWorkBudget(
               lease,
               runId,
-              reportFinishedAt - reportStartedAt,
+              runLimits.activeWorkBudgetMs,
+              runStore,
+              () =>
+                AUTOMATIC_PHASES.reporting.work(
+                  runReporter,
+                  runId,
+                  attempts,
+                ),
             );
-            if (reporting._tag === "Left") {
-              return yield* Effect.fail(reporting.left);
-            }
             const result = {
               phase: "completed",
               outcome: "passed",

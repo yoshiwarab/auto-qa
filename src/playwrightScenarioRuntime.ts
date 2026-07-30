@@ -19,6 +19,7 @@ import {
   type ScenarioEnvironment,
   type ScenarioRuntime,
 } from "./scenarioRuntime.js";
+import { compileScenarioScript as compileTrustedScenarioScript } from "./scenarioScript.js";
 import {
   syncDirectory,
   writeFileDurably,
@@ -44,13 +45,8 @@ const compileScenarioScript = (
   source: string,
 ): Effect.Effect<ScenarioScript, ScenarioRuntimeError> =>
   Effect.try({
-    try: () => {
-      const candidate = Function(`"use strict"; return (${source});`)();
-      if (typeof candidate !== "function") {
-        throw new Error("Scenario Script must evaluate to a function");
-      }
-      return candidate as ScenarioScript;
-    },
+    try: () =>
+      compileTrustedScenarioScript<ScenarioScript>(source),
     catch: (cause) =>
       new ScenarioRuntimeError({
         operation: "compile Scenario Script",
