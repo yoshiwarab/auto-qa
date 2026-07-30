@@ -330,6 +330,49 @@ describe("CLI durable generate-plan handoff", () => {
     expect(targetApplicationRequestCount).toBe(0);
   });
 
+  test("Git tool failures remain change inspection errors", async () => {
+    const worktree = await makeTemporaryGitWorktree();
+    targetApplicationRequestCount = 0;
+    let result: ProcessResult;
+    try {
+      const processResult = await execFileAsync(
+        process.execPath,
+        [cliPath, "start", "--base-url", baseUrl.href],
+        {
+          cwd: join(worktree, "src"),
+          env: { ...process.env, PATH: "" },
+        },
+      );
+      result = { exitCode: 0, ...processResult };
+    } catch (cause) {
+      const failure = cause as {
+        readonly code?: number;
+        readonly stdout?: string;
+        readonly stderr?: string;
+      };
+      result = {
+        exitCode: failure.code ?? 1,
+        stdout: failure.stdout ?? "",
+        stderr: failure.stderr ?? "",
+      };
+    }
+
+    expect(result).toMatchObject({ exitCode: 1, stderr: "" });
+    expect(parseOnlyJsonLine(result.stdout)).toMatchObject({
+      schemaVersion: 1,
+      correlationId: expect.any(String),
+      ok: false,
+      error: {
+        code: "ChangeInspectionError",
+        message: "Auto-QA command failed",
+      },
+    });
+    await expect(
+      pathExists(join(worktree, ".auto-qa")),
+    ).resolves.toBe(false);
+    expect(targetApplicationRequestCount).toBe(0);
+  });
+
   test("a second start identifies the active Run without replacing it", async () => {
     const worktree = await makeTemporaryGitWorktree();
     const first = await runCli(worktree, [
