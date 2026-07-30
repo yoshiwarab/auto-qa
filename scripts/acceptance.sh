@@ -10,6 +10,8 @@ if [[ ! -f "$aps_root/bb.edn" ]]; then
   exit 1
 fi
 
+bash "$project_root/scripts/ensure-playwright.sh"
+
 mkdir -p "$project_root/build/acceptance/ir" \
   "$project_root/build/acceptance/dry" "$generated"
 
@@ -18,6 +20,7 @@ node "$project_root/node_modules/typescript/bin/tsc" \
 
 for stem in durable-generate-plan-handoff \
   atomic-generate-plan-rejection \
+  passing-scenario-completes-run \
   cli-durable-generate-plan-handoff \
   cli-one-active-run-per-worktree \
   cli-abandon-active-run \

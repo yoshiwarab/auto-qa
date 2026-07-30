@@ -20,6 +20,7 @@ export default defineConfig({
       "dist/**",
       "node_modules/**",
       "tmp/**",
+      "test/**/*.browser.test.ts",
     ],
   },
 });

@@ -17,8 +17,10 @@ import {
   RunId,
   type RunPhase,
 } from "./workflowMachine.js";
+import type { ScenarioSubmission } from "./planValidation.js";
 import { prepareSqliteRunStoreSchema } from "./sqliteRunStoreSchema.js";
 import type {
+  AttemptRecord,
   GeneratePlanJob,
   RunStatus,
 } from "./workflowProtocol.js";
@@ -32,6 +34,23 @@ type RunRow = {
   readonly phase: string;
   readonly base_url: string;
   readonly abandon_reason: string | null;
+  readonly outcome: string | null;
+};
+
+type AttemptRow = {
+  readonly scenario_id: string;
+  readonly attempt_number: number;
+  readonly script_version: number;
+  readonly status: "passed" | "failed";
+  readonly evidence_path: string;
+};
+
+type ScenarioRow = {
+  readonly scenario_id: string;
+  readonly goal: string;
+  readonly preconditions_json: string;
+  readonly mutates: number;
+  readonly source: string;
 };
 
 type TurnLockRow = {
@@ -47,10 +66,19 @@ const asRunRow = (value: unknown): RunRow | undefined =>
 const asTurnLockRow = (value: unknown): TurnLockRow | undefined =>
   value as TurnLockRow | undefined;
 
+const asAttemptRows = (value: unknown): readonly AttemptRow[] =>
+  value as readonly AttemptRow[];
+
+const asScenarioRows = (value: unknown): readonly ScenarioRow[] =>
+  value as readonly ScenarioRow[];
+
 const decodePhase = (phase: string): RunPhase => {
   if (
     phase === "inspectingChanges" ||
     phase === "awaitingAgent" ||
+    phase === "executingScenarios" ||
+    phase === "reporting" ||
+    phase === "completed" ||
     phase === "abandoned"
   ) {
     return phase;
@@ -65,6 +93,13 @@ const toRunStatus = (run: RunRecord): RunStatus =>
         phase: run.phase,
         reason: run.reason,
       }
+    : run.phase === "completed"
+    ? {
+        runId: run.runId,
+        phase: run.phase,
+        outcome: run.outcome,
+        attempts: run.attempts,
+      }
     : {
         runId: run.runId,
         phase: run.phase,
@@ -72,15 +107,18 @@ const toRunStatus = (run: RunRecord): RunStatus =>
 
 export class SqliteRunStore implements RunStore {
   private readonly hasAbandonReason: boolean;
+  private readonly hasOutcome: boolean;
 
   constructor(
     private readonly database: DatabaseSync,
     initialize = true,
   ) {
-    this.hasAbandonReason = prepareSqliteRunStoreSchema(
+    const schema = prepareSqliteRunStoreSchema(
       database,
       initialize,
-    ).hasAbandonReason;
+    );
+    this.hasAbandonReason = schema.hasAbandonReason;
+    this.hasOutcome = schema.hasOutcome;
   }
 
   close(): void {
@@ -153,7 +191,7 @@ export class SqliteRunStore implements RunStore {
       const row = asRunRow(
         this.database
           .prepare(
-            `SELECT run_id, phase, base_url, ${this.abandonReasonSelection()} FROM runs WHERE run_id = ?`,
+            `SELECT run_id, phase, base_url, ${this.abandonReasonSelection()}, ${this.outcomeSelection()} FROM runs WHERE run_id = ?`,
           )
           .get(runId),
       );
@@ -170,6 +208,24 @@ export class SqliteRunStore implements RunStore {
           phase,
           baseUrl: new URL(row.base_url),
           reason: row.abandon_reason,
+        };
+      }
+      if (phase === "completed") {
+        if (
+          row.outcome !== "passed" &&
+          row.outcome !== "defects-found" &&
+          row.outcome !== "inconclusive"
+        ) {
+          throw new Error(
+            `Persisted completed Run ${row.run_id} has no outcome`,
+          );
+        }
+        return {
+          runId: RunId(row.run_id),
+          phase,
+          baseUrl: new URL(row.base_url),
+          outcome: row.outcome,
+          attempts: this.readAttempts(RunId(row.run_id)),
         };
       }
       return {
@@ -201,7 +257,7 @@ export class SqliteRunStore implements RunStore {
           const activeRun = asRunRow(
             this.database
               .prepare(
-                `SELECT run_id, phase, base_url, ${this.abandonReasonSelection()} FROM runs WHERE phase != 'abandoned' LIMIT 1`,
+                `SELECT run_id, phase, base_url, ${this.abandonReasonSelection()}, ${this.outcomeSelection()} FROM runs WHERE phase NOT IN ('abandoned', 'completed') LIMIT 1`,
               )
               .get(),
           );
@@ -285,6 +341,143 @@ export class SqliteRunStore implements RunStore {
                 ownershipToken: lease.ownershipToken,
               }),
             ),
+    );
+  }
+
+  acceptPlan(
+    lease: TurnLease,
+    runId: RunId,
+    scenarios: readonly ScenarioSubmission[],
+  ): Effect.Effect<
+    readonly ScenarioSubmission[],
+    TurnOwnershipLostError | WorkflowStoreError
+  > {
+    return Effect.gen(this, function* () {
+      yield* this.ownedTransaction(
+        lease,
+        "accept generate-plan",
+        () => {
+          scenarios.forEach((scenario, position) => {
+            this.database
+              .prepare(
+                "INSERT INTO scenarios (run_id, scenario_id, position, goal, preconditions_json, mutates) VALUES (?, ?, ?, ?, ?, ?)",
+              )
+              .run(
+                runId,
+                scenario.id,
+                position,
+                scenario.goal,
+                JSON.stringify(scenario.preconditions),
+                scenario.mutates ? 1 : 0,
+              );
+            this.database
+              .prepare(
+                "INSERT INTO scenario_scripts (run_id, scenario_id, script_version, source) VALUES (?, ?, 0, ?)",
+              )
+              .run(runId, scenario.id, scenario.script);
+          });
+          this.database
+            .prepare("DELETE FROM jobs WHERE run_id = ?")
+            .run(runId);
+          this.database
+            .prepare("UPDATE runs SET phase = ? WHERE run_id = ?")
+            .run("executingScenarios", runId);
+          const first = scenarios[0];
+          if (first !== undefined) {
+            this.startScenarioOperation(runId, first.id);
+          }
+        },
+      );
+      return yield* this.tryStore("read frozen Scenario Scripts", () =>
+        asScenarioRows(
+          this.database
+            .prepare(
+              "SELECT scenarios.scenario_id, scenarios.goal, scenarios.preconditions_json, scenarios.mutates, scenario_scripts.source FROM scenarios JOIN scenario_scripts ON scenario_scripts.run_id = scenarios.run_id AND scenario_scripts.scenario_id = scenarios.scenario_id AND scenario_scripts.script_version = 0 WHERE scenarios.run_id = ? ORDER BY scenarios.position",
+            )
+            .all(runId),
+        ).map((row) => ({
+          id: row.scenario_id,
+          goal: row.goal,
+          preconditions: JSON.parse(
+            row.preconditions_json,
+          ) as readonly string[],
+          mutates: row.mutates === 1,
+          script: row.source,
+        })),
+      );
+    });
+  }
+
+  completeAttempt(
+    lease: TurnLease,
+    runId: RunId,
+    attempt: AttemptRecord,
+    nextScenarioId: string | undefined,
+  ): Effect.Effect<
+    void,
+    TurnOwnershipLostError | WorkflowStoreError
+  > {
+    return this.ownedTransaction(
+      lease,
+      "complete Scenario Attempt",
+      () => {
+        this.database
+          .prepare(
+            "UPDATE operations SET status = 'completed' WHERE operation_id = ?",
+          )
+          .run(
+            `${runId}:execute:${attempt.scenarioId}:${attempt.attemptNumber}`,
+          );
+        this.database
+          .prepare(
+            "INSERT INTO attempts (run_id, scenario_id, attempt_number, script_version, status, evidence_path) VALUES (?, ?, ?, ?, ?, ?)",
+          )
+          .run(
+            runId,
+            attempt.scenarioId,
+            attempt.attemptNumber,
+            attempt.scriptVersion,
+            attempt.status,
+            attempt.evidencePath,
+          );
+        if (nextScenarioId === undefined) {
+          this.database
+            .prepare("UPDATE runs SET phase = 'reporting' WHERE run_id = ?")
+            .run(runId);
+          this.database
+            .prepare(
+              "INSERT INTO operations (operation_id, run_id, kind, status, recovery_policy) VALUES (?, ?, 'write-report', 'started', 'rerun')",
+            )
+            .run(`${runId}:write-report:1`, runId);
+        } else {
+          this.startScenarioOperation(runId, nextScenarioId);
+        }
+      },
+    );
+  }
+
+  completePassingReport(
+    lease: TurnLease,
+    runId: RunId,
+  ): Effect.Effect<
+    void,
+    TurnOwnershipLostError | WorkflowStoreError
+  > {
+    return this.ownedTransaction(
+      lease,
+      "complete Run report",
+      () => {
+        this.database
+          .prepare(
+            "UPDATE operations SET status = 'completed' WHERE operation_id = ?",
+          )
+          .run(`${runId}:write-report:1`);
+        this.database
+          .prepare(
+            "UPDATE runs SET phase = 'completed', outcome = 'passed' WHERE run_id = ?",
+          )
+          .run(runId);
+      },
     );
   }
 
@@ -417,6 +610,62 @@ export class SqliteRunStore implements RunStore {
     return this.hasAbandonReason
       ? "abandon_reason"
       : "NULL AS abandon_reason";
+  }
+
+  private outcomeSelection(): string {
+    return this.hasOutcome ? "outcome" : "NULL AS outcome";
+  }
+
+  private readAttempts(runId: RunId): readonly AttemptRecord[] {
+    return asAttemptRows(
+      this.database
+        .prepare(
+          "SELECT attempts.scenario_id, attempts.attempt_number, attempts.script_version, attempts.status, attempts.evidence_path FROM attempts JOIN scenarios ON scenarios.run_id = attempts.run_id AND scenarios.scenario_id = attempts.scenario_id WHERE attempts.run_id = ? ORDER BY scenarios.position, attempts.attempt_number",
+        )
+        .all(runId),
+    ).map((row) => ({
+      scenarioId: row.scenario_id,
+      attemptNumber: row.attempt_number,
+      scriptVersion: row.script_version,
+      status: row.status,
+      evidencePath: row.evidence_path,
+    }));
+  }
+
+  private startScenarioOperation(
+    runId: RunId,
+    scenarioId: string,
+  ): void {
+    this.database
+      .prepare(
+        "INSERT INTO operations (operation_id, run_id, kind, status, recovery_policy) VALUES (?, ?, 'execute-scenario', 'started', 'record-interrupted')",
+      )
+      .run(`${runId}:execute:${scenarioId}:1`, runId);
+  }
+
+  private ownedTransaction(
+    lease: TurnLease,
+    operation: string,
+    work: () => void,
+  ): Effect.Effect<
+    void,
+    TurnOwnershipLostError | WorkflowStoreError
+  > {
+    return Effect.flatMap(
+      this.transaction(operation, () => {
+        if (!this.ownsTurn(lease)) return false;
+        work();
+        return true;
+      }),
+      (ownsTurn) =>
+        ownsTurn
+          ? Effect.void
+          : Effect.fail(
+              new TurnOwnershipLostError({
+                ownershipToken: lease.ownershipToken,
+              }),
+            ),
+    );
   }
 
   private tryStore<Result>(

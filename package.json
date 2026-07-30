@@ -16,6 +16,7 @@
     "acceptance:setup": "bash scripts/setup-acceptance-tools.sh",
     "analyze:duplication": "jscpd src acceptance test --min-lines 5 --min-tokens 50 --reporters console --ignore '**/build/**,**/dist/**,**/node_modules/**,**/tmp/**' --no-colors --no-tips",
     "build": "tsc --project tsconfig.build.json",
+    "browser": "bash scripts/browser.sh",
     "lint": "eslint .",
     "mutation:cli-protocol": "stryker run --mutate src/cliProtocol.ts --testFiles test/cli-protocol.test.ts --testRunner vitest --plugins @stryker-mutator/vitest-runner --concurrency 2 --reporters clear-text,progress --ignoreStatic --incremental --incrementalFile reports/stryker-cli-protocol.json --cleanTempDir always",
     "mutation:plan-validation": "stryker run --mutate src/planValidation.ts --testFiles test/workflow-engine.test.ts --testRunner vitest --plugins @stryker-mutator/vitest-runner --concurrency 2 --reporters clear-text,progress --ignoreStatic --incremental --incrementalFile reports/stryker-plan-validation.json --cleanTempDir always",
@@ -37,7 +38,8 @@
   },
   "dependencies": {
     "commander": "^15.0.0",
-    "effect": "^3.22.0"
+    "effect": "^3.22.0",
+    "playwright": "^1.62.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

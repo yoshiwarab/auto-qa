@@ -65,6 +65,19 @@ const createNoChangeWorkflowEngine = (
       inspect: () => Effect.succeed([]),
     },
     readOnly,
+    scenarioRuntime: {
+      execute: (attempt) =>
+        Effect.succeed({
+          scenarioId: attempt.scenario.id,
+          attemptNumber: attempt.attemptNumber,
+          scriptVersion: attempt.scriptVersion,
+          status: "passed",
+          evidencePath: `runs/${attempt.runId}/scenarios/${attempt.scenario.id}/attempt-1`,
+        }),
+    },
+    runReporter: {
+      writePassingReport: () => Effect.void,
+    },
   });
 
 afterEach(async () => {
@@ -280,12 +293,18 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         },
         pendingJob: result.pendingJob,
         validSubmission: {
-          _tag: "Left",
-          left: {
-            _tag: "InvalidTransitionError",
-            phase: "awaitingAgent",
-            event: "submitJob",
-            allowedEvents: ["abandon"],
+          _tag: "Right",
+          right: {
+            phase: "completed",
+            outcome: "passed",
+            attempts: [
+              {
+                scenarioId: "dashboard-loads",
+                attemptNumber: 1,
+                scriptVersion: 0,
+                status: "passed",
+              },
+            ],
           },
         },
       });
@@ -669,7 +688,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         expect(repeatedStart.left).toMatchObject({
           phase: "awaitingAgent",
           event: "start",
-          allowedEvents: ["abandon"],
+          allowedEvents: ["submitJob", "abandon"],
         });
       }
     });

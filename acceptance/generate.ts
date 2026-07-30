@@ -26,7 +26,12 @@ export const generateDurablePlanEntrypoint = async (
   );
   const featurePath = normalizePath(join("features", `${stem}.feature`));
   const binding =
-    stem === "atomic-generate-plan-rejection"
+    stem === "passing-scenario-completes-run"
+      ? {
+          module: "passingScenarioCompletesRun",
+          name: "passingScenarioCompletesRun",
+        }
+      : stem === "atomic-generate-plan-rejection"
       ? {
           module: "atomicGeneratePlanRejection",
           name: "atomicGeneratePlanRejection",

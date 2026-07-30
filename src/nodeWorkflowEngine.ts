@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { dirname } from "node:path";
 import { Effect, Scope } from "effect";
 import { openSqliteRunStore } from "./sqliteRunStore.js";
+import { makeFileRunReporter } from "./fileRunReporter.js";
+import { makePlaywrightScenarioRuntime } from "./playwrightScenarioRuntime.js";
+import type { RunReporter } from "./runReporter.js";
+import type { ScenarioRuntime } from "./scenarioRuntime.js";
 import {
   makeWorkflowEngine,
   type ChangeInspector,
@@ -24,20 +29,33 @@ export const createWorkflowEngine = ({
   changeInspector,
   turnOwnerFactory = makeTurnOwner,
   readOnly = false,
+  scenarioRuntime,
+  runReporter,
 }: {
   readonly databasePath: string;
   readonly changeInspector: ChangeInspector;
   readonly turnOwnerFactory?: () => TurnOwner;
   readonly readOnly?: boolean;
+  readonly scenarioRuntime?: ScenarioRuntime;
+  readonly runReporter?: RunReporter;
 }): Effect.Effect<
   WorkflowEngine,
   WorkflowStoreError,
   Scope.Scope
-> =>
-  Effect.map(openSqliteRunStore(databasePath, { readOnly }), (runStore) =>
-    makeWorkflowEngine({
-      runStore,
-      changeInspector,
-      makeTurnOwner: turnOwnerFactory,
-    }),
+> => {
+  const stateDirectory = dirname(databasePath);
+  return Effect.map(
+    openSqliteRunStore(databasePath, { readOnly }),
+    (runStore) =>
+      makeWorkflowEngine({
+        runStore,
+        changeInspector,
+        scenarioRuntime:
+          scenarioRuntime ??
+          makePlaywrightScenarioRuntime(stateDirectory),
+        runReporter:
+          runReporter ?? makeFileRunReporter(stateDirectory),
+        makeTurnOwner: turnOwnerFactory,
+      }),
   );
+};

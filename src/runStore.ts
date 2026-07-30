@@ -4,6 +4,10 @@ import type {
   RunId,
 } from "./workflowMachine.js";
 import type {
+  ScenarioSubmission,
+} from "./planValidation.js";
+import type {
+  AttemptRecord,
   GeneratePlanJob,
   RunStatus,
 } from "./workflowProtocol.js";
@@ -35,7 +39,7 @@ export class TurnOwnershipLostError extends Data.TaggedError(
   readonly ownershipToken: string;
 }> {}
 
-export type RecoveryPolicy = "rerun";
+export type RecoveryPolicy = "rerun" | "record-interrupted";
 
 export type TurnOwner = {
   readonly processId: number;
@@ -80,6 +84,30 @@ export interface RunStore {
     lease: TurnLease,
     runId: RunId,
     job: GeneratePlanJob,
+  ) => Effect.Effect<
+    void,
+    TurnOwnershipLostError | WorkflowStoreError
+  >;
+  readonly acceptPlan: (
+    lease: TurnLease,
+    runId: RunId,
+    scenarios: readonly ScenarioSubmission[],
+  ) => Effect.Effect<
+    readonly ScenarioSubmission[],
+    TurnOwnershipLostError | WorkflowStoreError
+  >;
+  readonly completeAttempt: (
+    lease: TurnLease,
+    runId: RunId,
+    attempt: AttemptRecord,
+    nextScenarioId: string | undefined,
+  ) => Effect.Effect<
+    void,
+    TurnOwnershipLostError | WorkflowStoreError
+  >;
+  readonly completePassingReport: (
+    lease: TurnLease,
+    runId: RunId,
   ) => Effect.Effect<
     void,
     TurnOwnershipLostError | WorkflowStoreError

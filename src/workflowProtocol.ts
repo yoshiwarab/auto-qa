@@ -19,10 +19,32 @@ export type GeneratePlanJob = {
   };
 };
 
-export type DispatchResult = {
+export type AttemptStatus = "passed" | "failed";
+
+export type AttemptRecord = {
+  readonly scenarioId: string;
+  readonly attemptNumber: number;
+  readonly scriptVersion: number;
+  readonly status: AttemptStatus;
+  readonly evidencePath: string;
+};
+
+export type RunOutcome = "passed" | "defects-found" | "inconclusive";
+
+export type AwaitingAgentDispatchResult = {
   readonly phase: "awaitingAgent";
   readonly pendingJob: GeneratePlanJob;
 };
+
+export type CompletedDispatchResult = {
+  readonly phase: "completed";
+  readonly outcome: RunOutcome;
+  readonly attempts: readonly AttemptRecord[];
+};
+
+export type DispatchResult =
+  | AwaitingAgentDispatchResult
+  | CompletedDispatchResult;
 
 type IdentifiedRunStatus = {
   readonly runId: RunId;
@@ -31,11 +53,24 @@ type IdentifiedRunStatus = {
 export type RunStatus = IdentifiedRunStatus &
   (
     | {
-        readonly phase: Exclude<RunPhase, "abandoned">;
+        readonly phase: Exclude<
+          RunPhase,
+          "abandoned" | "completed"
+        >;
         readonly reason?: never;
+        readonly outcome?: never;
+        readonly attempts?: never;
       }
     | {
         readonly phase: "abandoned";
         readonly reason: string;
+        readonly outcome?: never;
+        readonly attempts?: never;
+      }
+    | {
+        readonly phase: "completed";
+        readonly outcome: RunOutcome;
+        readonly attempts: readonly AttemptRecord[];
+        readonly reason?: never;
       }
   );

@@ -34,12 +34,27 @@ export type ChangesInspectedEvent = {
   readonly type: "changesInspected";
 };
 
-export type MachineEvent = ExternalEvent | ChangesInspectedEvent;
+export type ScenarioBatchCompletedEvent = {
+  readonly type: "scenarioBatchCompleted";
+};
+
+export type ReportCompletedEvent = {
+  readonly type: "reportCompleted";
+};
+
+export type MachineEvent =
+  | ExternalEvent
+  | ChangesInspectedEvent
+  | ScenarioBatchCompletedEvent
+  | ReportCompletedEvent;
 export type MachineEventType = MachineEvent["type"];
 
 export type RunPhase =
   | "inspectingChanges"
   | "awaitingAgent"
+  | "executingScenarios"
+  | "reporting"
+  | "completed"
   | "abandoned";
 export type MachinePhase = "idle" | RunPhase;
 
@@ -66,8 +81,16 @@ export const TRANSITIONS = {
     abandon: "abandoned",
   },
   awaitingAgent: {
+    submitJob: "executingScenarios",
     abandon: "abandoned",
   },
+  executingScenarios: {
+    scenarioBatchCompleted: "reporting",
+  },
+  reporting: {
+    reportCompleted: "completed",
+  },
+  completed: {},
   abandoned: {},
 } as const satisfies Record<
   MachinePhase,

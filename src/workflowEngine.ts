@@ -4,6 +4,10 @@ import {
   validateGeneratePlan,
 } from "./planValidation.js";
 import type {
+  RunReportError,
+  RunReporter,
+} from "./runReporter.js";
+import type {
   ActiveRunExistsError,
   RunBusyError,
   RunRecord,
@@ -14,26 +18,33 @@ import type {
   WorkflowStoreError,
 } from "./runStore.js";
 import { RunNotFoundError } from "./runStore.js";
+import type {
+  ScenarioRuntime,
+  ScenarioRuntimeError,
+} from "./scenarioRuntime.js";
 import {
   InvalidTransitionError,
   allowedEvents,
   step,
   type AbandonEvent,
   type ExternalEvent,
-  type MachinePhase,
   type MachineSnapshot,
   type RunId,
   type StartEvent,
   type SubmitJobEvent,
 } from "./workflowMachine.js";
 import type {
+  AwaitingAgentDispatchResult,
   Change,
+  CompletedDispatchResult,
   DispatchResult,
   GeneratePlanJob,
   RunStatus,
 } from "./workflowProtocol.js";
 
 export type {
+  AwaitingAgentDispatchResult,
+  CompletedDispatchResult,
   Change,
   DispatchResult,
   GeneratePlanJob,
@@ -61,8 +72,10 @@ export type WorkflowError =
   | ChangeInspectionError
   | InvalidTransitionError
   | PlanValidationError
+  | RunReportError
   | RunBusyError
   | RunNotFoundError
+  | ScenarioRuntimeError
   | TurnOwnershipLostError
   | WorkflowStoreError;
 
@@ -71,7 +84,7 @@ export interface WorkflowEngine {
     (
       runId: RunId,
       event: StartEvent,
-    ): Effect.Effect<DispatchResult, WorkflowError>;
+    ): Effect.Effect<AwaitingAgentDispatchResult, WorkflowError>;
     (
       runId: RunId,
       event: AbandonEvent,
@@ -79,7 +92,7 @@ export interface WorkflowEngine {
     (
       runId: RunId,
       event: SubmitJobEvent,
-    ): Effect.Effect<DispatchResult, WorkflowError>;
+    ): Effect.Effect<CompletedDispatchResult, WorkflowError>;
   };
   readonly getPendingJob: (
     runId: RunId,
@@ -104,13 +117,23 @@ export const AUTOMATIC_PHASES = {
         }),
       ),
   },
+  executingScenarios: {
+    recoveryPolicy: "record-interrupted",
+    work: (
+      runtime: ScenarioRuntime,
+      attempt: Parameters<ScenarioRuntime["execute"]>[0],
+      baseUrl: URL,
+    ) => runtime.execute(attempt, { baseUrl }),
+  },
+  reporting: {
+    recoveryPolicy: "rerun",
+    work: (
+      reporter: RunReporter,
+      runId: string,
+      attempts: Parameters<RunReporter["writePassingReport"]>[1],
+    ) => reporter.writePassingReport(runId, attempts),
+  },
 } as const;
-
-type AutomaticPhase = keyof typeof AUTOMATIC_PHASES;
-
-const isAutomaticPhase = (
-  phase: MachinePhase,
-): phase is AutomaticPhase => phase in AUTOMATIC_PHASES;
 
 const recoveredSnapshot = (
   run: RunRecord,
@@ -132,7 +155,7 @@ const validatePendingGeneratePlan = (
   event: SubmitJobEvent,
   runStore: RunStore,
 ): Effect.Effect<
-  void,
+  readonly import("./planValidation.js").ScenarioSubmission[],
   PlanValidationError | InvalidTransitionError | WorkflowStoreError
 > =>
   Effect.gen(function* () {
@@ -154,6 +177,7 @@ const validatePendingGeneratePlan = (
     if (validation._tag === "Left") {
       return yield* Effect.fail(validation.left);
     }
+    return validation.right;
   });
 
 const createGeneratePlanJob = (
@@ -170,45 +194,37 @@ const createGeneratePlanJob = (
   },
 });
 
-const runAutomaticPhases = (
+const runChangeInspection = (
   initialSnapshot: MachineSnapshot,
   lease: TurnLease,
   runStore: RunStore,
   changeInspector: ChangeInspector,
-): Effect.Effect<DispatchResult, WorkflowError> =>
+): Effect.Effect<AwaitingAgentDispatchResult, WorkflowError> =>
   Effect.gen(function* () {
-    let snapshot = initialSnapshot;
-    let pendingJob: GeneratePlanJob | undefined;
-
-    while (isAutomaticPhase(snapshot.phase)) {
-      const work = AUTOMATIC_PHASES[snapshot.phase];
-      const result = yield* work.work(snapshot, changeInspector);
-      const transition = step(snapshot, result.event);
-      const next =
-        transition._tag === "Left"
-          ? yield* Effect.fail(transition.left)
-          : transition.right;
-      pendingJob = createGeneratePlanJob(next, result.changes);
-      yield* runStore.completeInspection(
-        lease,
-        snapshot.runId,
-        pendingJob,
-      );
-      snapshot = next;
-    }
-
-    if (
-      snapshot.phase !== "awaitingAgent" ||
-      pendingJob === undefined
-    ) {
+    if (initialSnapshot.phase !== "inspectingChanges") {
       return yield* Effect.fail(
         new InvalidTransitionError({
-          phase: snapshot.phase,
+          phase: initialSnapshot.phase,
           event: "changesInspected",
-          allowedEvents: allowedEvents(snapshot.phase),
+          allowedEvents: allowedEvents(initialSnapshot.phase),
         }),
       );
     }
+    const result = yield* AUTOMATIC_PHASES.inspectingChanges.work(
+      initialSnapshot,
+      changeInspector,
+    );
+    const transition = step(initialSnapshot, result.event);
+    const next =
+      transition._tag === "Left"
+        ? yield* Effect.fail(transition.left)
+        : transition.right;
+    const pendingJob = createGeneratePlanJob(next, result.changes);
+    yield* runStore.completeInspection(
+      lease,
+      initialSnapshot.runId,
+      pendingJob,
+    );
 
     return {
       phase: "awaitingAgent",
@@ -248,10 +264,14 @@ const withTurn = <Result, Error>(
 export const makeWorkflowEngine = ({
   runStore,
   changeInspector,
+  scenarioRuntime,
+  runReporter,
   makeTurnOwner,
 }: {
   readonly runStore: RunStore;
   readonly changeInspector: ChangeInspector;
+  readonly scenarioRuntime: ScenarioRuntime;
+  readonly runReporter: RunReporter;
   readonly makeTurnOwner: () => TurnOwner;
 }): WorkflowEngine => {
   const dispatch = (
@@ -267,18 +287,83 @@ export const makeWorkflowEngine = ({
                 new RunNotFoundError({ runId }),
               );
             }
-            yield* validatePendingGeneratePlan(
+            const scenarios = yield* validatePendingGeneratePlan(
               persisted,
               event,
               runStore,
             );
-            return yield* Effect.fail(
-              new InvalidTransitionError({
-                phase: persisted.phase,
-                event: event.type,
-                allowedEvents: allowedEvents(persisted.phase),
-              }),
+            const accepted = step(persisted, event);
+            if (accepted._tag === "Left") {
+              return yield* Effect.fail(accepted.left);
+            }
+            const frozenScenarios = yield* runStore.acceptPlan(
+              lease,
+              runId,
+              scenarios,
             );
+            const attempts = [];
+            let evaluatedSnapshot: MachineSnapshot | undefined;
+            for (const [
+              index,
+              scenario,
+            ] of frozenScenarios.entries()) {
+              const attempt =
+                yield* AUTOMATIC_PHASES.executingScenarios.work(
+                  scenarioRuntime,
+                  {
+                    runId,
+                    scenario,
+                    attemptNumber: 1,
+                    scriptVersion: 0,
+                  },
+                  persisted.baseUrl,
+                );
+              attempts.push(attempt);
+              const nextScenario = frozenScenarios[index + 1];
+              if (nextScenario === undefined) {
+                const evaluated = step(accepted.right, {
+                  type: "scenarioBatchCompleted",
+                });
+                if (evaluated._tag === "Left") {
+                  return yield* Effect.fail(evaluated.left);
+                }
+                evaluatedSnapshot = evaluated.right;
+              }
+              yield* runStore.completeAttempt(
+                lease,
+                runId,
+                attempt,
+                nextScenario?.id,
+              );
+            }
+            if (evaluatedSnapshot === undefined) {
+              return yield* Effect.fail(
+                new InvalidTransitionError({
+                  phase: accepted.right.phase,
+                  event: "scenarioBatchCompleted",
+                  allowedEvents: allowedEvents(
+                    accepted.right.phase,
+                  ),
+                }),
+              );
+            }
+            const completed = step(evaluatedSnapshot, {
+              type: "reportCompleted",
+            });
+            if (completed._tag === "Left") {
+              return yield* Effect.fail(completed.left);
+            }
+            yield* AUTOMATIC_PHASES.reporting.work(
+              runReporter,
+              runId,
+              attempts,
+            );
+            yield* runStore.completePassingReport(lease, runId);
+            return {
+              phase: "completed",
+              outcome: "passed",
+              attempts,
+            };
           }
           if (event.type === "abandon") {
             if (persisted === null) {
@@ -320,7 +405,7 @@ export const makeWorkflowEngine = ({
             );
           }
 
-          return yield* runAutomaticPhases(
+          return yield* runChangeInspection(
             inspecting,
             lease,
             runStore,

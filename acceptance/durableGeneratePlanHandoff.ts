@@ -7,7 +7,7 @@ import {
   createWorkflowEngine,
   type Change,
   type ChangeInspector,
-  type DispatchResult,
+  type AwaitingAgentDispatchResult,
   type GeneratePlanJob,
   type RunStatus,
   type WorkflowEngine,
@@ -23,7 +23,7 @@ type World = {
   readonly runId: ReturnType<typeof RunId>;
   readonly baseUrl: URL;
   changes: readonly Change[];
-  dispatchResult?: DispatchResult;
+  dispatchResult?: AwaitingAgentDispatchResult;
   restartedJob?: GeneratePlanJob | null;
   restartedStatus?: RunStatus;
 };

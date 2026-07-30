@@ -1,9 +1,10 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Data, Effect } from "effect";
 import { cliSuccess } from "./cliProtocol.js";
 import { makeGitChangeInspector } from "./gitChangeInspector.js";
 import { findGitWorktree } from "./gitWorktree.js";
+import type { GeneratePlanSubmission } from "./planValidation.js";
 import { RunId } from "./workflowMachine.js";
 
 export type CliCommand =
@@ -19,6 +20,12 @@ export type CliCommand =
       readonly type: "abandon";
       readonly runId: string;
       readonly reason: string;
+    }
+  | {
+      readonly type: "submit";
+      readonly runId: string;
+      readonly jobId: string;
+      readonly file: string;
     };
 
 class CliBoundaryError extends Data.TaggedError("CliBoundaryError")<{
@@ -105,6 +112,25 @@ export const runCliCommand = (
         });
         return cliSuccess(status, makeId());
       }
+      if (command.type === "submit") {
+        const payload = yield* Effect.tryPromise({
+          try: async () =>
+            JSON.parse(
+              await readFile(command.file, "utf8"),
+            ) as GeneratePlanSubmission,
+          catch: (cause) =>
+            new CliBoundaryError({
+              operation: "read Job submission",
+              cause,
+            }),
+        });
+        const result = yield* engine.dispatch(runId, {
+          type: "submitJob",
+          jobId: command.jobId,
+          payload,
+        });
+        return cliSuccess(result, makeId());
+      }
       if (command.type === "job") {
         const [status, job] = yield* Effect.all([
           engine.getStatus(runId),
@@ -116,6 +142,12 @@ export const runCliCommand = (
       const status = yield* engine.getStatus(runId);
       return cliSuccess({
         phase: status.phase,
+        ...(status.outcome === undefined
+          ? {}
+          : {
+              outcome: status.outcome,
+              attempts: status.attempts,
+            }),
         ...(status.reason === undefined
           ? {}
           : { reason: status.reason }),

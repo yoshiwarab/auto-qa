@@ -1,14 +1,23 @@
 export {
   AUTOMATIC_PHASES,
+  type AwaitingAgentDispatchResult,
   ChangeInspectionError,
   type Change,
   type ChangeInspector,
+  type CompletedDispatchResult,
   type DispatchResult,
   type GeneratePlanJob,
   type RunStatus,
   type WorkflowEngine,
   type WorkflowError,
 } from "./workflowEngine.js";
+
+export {
+  ScenarioRuntimeError,
+  type FrozenScenarioAttempt,
+  type ScenarioEnvironment,
+  type ScenarioRuntime,
+} from "./scenarioRuntime.js";
 
 export {
   PlanValidationError,
@@ -27,7 +36,9 @@ export {
   type MachineEventType,
   type MachinePhase,
   type MachineSnapshot,
+  type ReportCompletedEvent,
   type RunPhase,
+  type ScenarioBatchCompletedEvent,
   type SubmitJobEvent,
 } from "./workflowMachine.js";
 

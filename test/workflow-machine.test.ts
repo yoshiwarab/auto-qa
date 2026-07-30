@@ -63,6 +63,12 @@ const eventFixtures = {
       scenarios: [],
     },
   }),
+  scenarioBatchCompleted: (): MachineEvent => ({
+    type: "scenarioBatchCompleted",
+  }),
+  reportCompleted: (): MachineEvent => ({
+    type: "reportCompleted",
+  }),
 } satisfies Record<MachineEventType, () => MachineEvent>;
 
 const eventTypes = Object.keys(

@@ -33,6 +33,26 @@ const parseCommand = (argv: readonly string[]): CliCommand => {
     command = { type: "status", runId };
   });
   program
+    .command("submit <run-id>")
+    .requiredOption("--job-id <job-id>")
+    .requiredOption("--file <path>")
+    .action(
+      (
+        runId: string,
+        options: {
+          readonly jobId: string;
+          readonly file: string;
+        },
+      ) => {
+        command = {
+          type: "submit",
+          runId,
+          jobId: options.jobId,
+          file: options.file,
+        };
+      },
+    );
+  program
     .command("runs")
     .command("abandon <run-id>")
     .requiredOption("--reason <reason>")
