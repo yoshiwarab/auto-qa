@@ -23,6 +23,7 @@ ADRs before changing behavior.
 - Test applications are externally started and externally owned Target
   Applications. Auto-QA receives their harness-supplied ephemeral Base URLs and
   does not start or stop them.
+- Read `docs/qa-lab.md` before changing QA Lab or its browser-test harness.
 
 ## Engineering rules
 

@@ -36,7 +36,8 @@ Deliver:
 - directly managed Playwright behind `ScenarioRuntime`;
 - Effect-scoped browser, context, and child-process ownership;
 - durable resource-registry entry before owned browser work proceeds;
-- externally started fixture Target Application owned by the test harness;
+- externally started QA Lab Target Application from `apps/qa-lab`, owned by the
+  test harness;
 - one passing Attempt;
 - temporary Evidence Bundle staging, `result.json` and manifest finalization, and atomic promotion;
 - minimal report and `completed` / `passed`;

@@ -67,8 +67,8 @@ inspect an adapter only through its domain interface.
 
 ### Real-browser end-to-end tests
 
-- Start the fixture Target Application externally and execute the packaged CLI
-  with real Chromium.
+- Start the QA Lab Target Application from `apps/qa-lab` externally and execute
+  the packaged CLI with real Chromium.
 - Cover passing, assertion failure, timeout, console error, request failure,
   screenshot, trace, video mode, Mutating Scenario permission, batch
   continuation, and report generation.
@@ -77,6 +77,23 @@ inspect an adapter only through its domain interface.
   survives the invoking process.
 - Keep a small deterministic browser suite on ordinary CI; run broader repeated
   stress cases separately so flake detection does not slow every edit.
+
+### QA Lab
+
+- The product shape and test contract are defined in
+  [qa-lab.md](./qa-lab.md).
+- `apps/qa-lab` is a private, independently runnable pnpm workspace package used
+  only as a Target Application for browser and acceptance tests. It is not a
+  runtime dependency of Auto-QA and is not part of the packed CLI.
+- Add deterministic, accessible UI states to QA Lab only when a browser
+  Scenario needs them. The first state serves an accessible `Account` heading
+  for the existing passing-Scenario acceptance path.
+- The test harness starts QA Lab in a separate process using a harness-selected
+  ephemeral address, waits for readiness, supplies the resulting Base URL to
+  Auto-QA, and stops QA Lab after the test.
+- Auto-QA neither imports QA Lab nor starts, configures, or stops its process.
+  Browser tests must continue to prove that QA Lab remains running after the
+  Auto-QA process completes.
 
 ### Crash and recovery tests
 
