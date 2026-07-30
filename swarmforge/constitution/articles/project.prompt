@@ -3,7 +3,10 @@
 ## Project Shape
 - This project uses the four-role SwarmForge flow: specifier, coder,
   refactorer, and architect.
-- It is a single-package, strict TypeScript CLI for Node 22 or newer.
+- It is a pnpm workspace for a strict TypeScript CLI and independently runnable
+  test applications, all requiring Node 22 or newer.
+- The Auto-QA CLI remains the root package unless a dedicated migration moves
+  it; test applications live under `apps/*`.
 - Use pnpm through FNM with Node 22.
 - Effect owns services, resources, and typed errors. Commander parses arguments
   only. Playwright is the browser implementation and Vitest is the test runner.

@@ -14,6 +14,16 @@ ADRs before changing behavior.
 - Vitest is the test runner. Playwright is invoked as a library by Auto-QA and
   by Vitest-driven integration tests.
 
+## Workspace shape
+
+- This repository is organized to support pnpm workspace packages.
+- The Auto-QA CLI remains the root package unless a dedicated migration moves
+  it.
+- Independently runnable test applications belong under `apps/*`.
+- Test applications are externally started and externally owned Target
+  Applications. Auto-QA receives their harness-supplied ephemeral Base URLs and
+  does not start or stop them.
+
 ## Engineering rules
 
 - Implement one vertical tracer bullet at a time using red/green TDD.
