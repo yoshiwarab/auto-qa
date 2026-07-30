@@ -233,7 +233,7 @@ const handlers: readonly StepHandler<World>[] = [
     run: (world, example, captures) =>
       Effect.sync(() => {
         const heading = exampleValue(example, captures[0]);
-        world.script = `async ({ page, baseUrl, expect }) => { await page.goto(baseUrl.href); await expect(page.getByRole('heading', { name: '${heading}' })).toBeVisible(); }`;
+        world.script = `async ({ page, baseUrl, expect }) => { await page.goto(baseUrl.href); await expect(page.getByRole('heading', { name: '${heading}', exact: true })).toBeVisible(); }`;
       }),
   },
   {

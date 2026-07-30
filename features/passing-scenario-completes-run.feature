@@ -1,3 +1,8 @@
+# mutation-stamp: sha256=93af2916d227e34cad689ee864b6a37e28a817d5017c80f7630e3e7efab893aa
+# acceptance-mutation-manifest-begin
+# {"version":1,"tested_at":"2026-07-30T21:19:20.506532439Z","feature_name":"Passing Scenario completes a Run","feature_path":"features/passing-scenario-completes-run.feature","background_hash":"74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b","implementation_hash":"sha256:653d756f74a27afb10b0f726071574b8ff377a346d8de97ce82ea60b0e65b81c","scenarios":[{"index":0,"name":"Passing Scenario completes a Run 001","scenario_hash":"ffa0f12eb22243afc710d75e12118c4431515e7958a35670dee78c97772816c9","mutation_count":10,"result":{"Total":10,"Killed":10,"Survived":0,"Errors":0},"tested_at":"2026-07-30T21:19:20.506532439Z"}]}
+# acceptance-mutation-manifest-end
+
 # Scenario: Passing Scenario completes a Run 001
 Feature: Passing Scenario completes a Run
 

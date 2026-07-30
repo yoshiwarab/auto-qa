@@ -5,8 +5,8 @@ import type { AttemptRecord } from "./workflowProtocol.js";
 export type FrozenScenarioAttempt = {
   readonly runId: string;
   readonly scenario: ScenarioSubmission;
-  readonly attemptNumber: 1;
-  readonly scriptVersion: 0;
+  readonly attemptNumber: AttemptRecord["attemptNumber"];
+  readonly scriptVersion: AttemptRecord["scriptVersion"];
 };
 
 export type ScenarioEnvironment = {

@@ -53,7 +53,9 @@ const runMutation = (
   );
   const vitestConfig = resolve(
     projectRoot,
-    "vitest.acceptance.config.ts",
+    featureStem === "passing-scenario-completes-run"
+      ? "vitest.browser.config.ts"
+      : "vitest.acceptance.config.ts",
   );
 
   return new Promise((complete) => {

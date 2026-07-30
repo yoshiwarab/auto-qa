@@ -1,5 +1,5 @@
 import { Data, Either } from "effect";
-import { compileScenarioScript } from "./scenarioScript.js";
+import { validateScenarioScriptSource } from "./scenarioScript.js";
 
 export type PlanLimits = {
   readonly maxScenarios: number;
@@ -146,40 +146,42 @@ export const validateGeneratePlan = (
         );
       }
     }
-    if (
-      typeof candidate["goal"] !== "string" ||
-      !Array.isArray(candidate["preconditions"]) ||
-      !candidate["preconditions"].every(
-        (value) => typeof value === "string",
-      ) ||
-      typeof candidate["mutates"] !== "boolean" ||
-      typeof candidate["script"] !== "string"
-    ) {
-      const field = requiredScenarioFields.find((required) => {
-        const value = candidate[required];
-        return required === "goal" || required === "script"
-          ? typeof value !== "string"
-          : required === "mutates"
-          ? typeof value !== "boolean"
-          : !Array.isArray(value) ||
-              !value.every((entry) => typeof entry === "string");
-      });
+    const goal = candidate["goal"];
+    if (typeof goal !== "string") {
       return Either.left(
         new PlanValidationError({
           scenarioId: id,
-          field: field ?? "goal",
-          message: `Scenario ${id} has invalid required field ${field ?? "goal"}`,
+          field: "goal",
+          message: `Scenario ${id} has invalid required field goal`,
         }),
       );
     }
-    scenarios.push({
-      id,
-      goal: candidate["goal"],
-      preconditions: candidate["preconditions"],
-      mutates: candidate["mutates"],
-      script: candidate["script"],
-    });
-    if (candidate["mutates"]) {
+    const preconditions = candidate["preconditions"];
+    if (
+      !Array.isArray(preconditions) ||
+      !preconditions.every(
+        (entry) => typeof entry === "string",
+      )
+    ) {
+      return Either.left(
+        new PlanValidationError({
+          scenarioId: id,
+          field: "preconditions",
+          message: `Scenario ${id} has invalid required field preconditions`,
+        }),
+      );
+    }
+    const mutates = candidate["mutates"];
+    if (typeof mutates !== "boolean") {
+      return Either.left(
+        new PlanValidationError({
+          scenarioId: id,
+          field: "mutates",
+          message: `Scenario ${id} has invalid required field mutates`,
+        }),
+      );
+    }
+    if (mutates) {
       return Either.left(
         new PlanValidationError({
           scenarioId: id,
@@ -188,8 +190,9 @@ export const validateGeneratePlan = (
         }),
       );
     }
+    let script: string;
     try {
-      compileScenarioScript(candidate["script"]);
+      script = validateScenarioScriptSource(candidate["script"]);
     } catch {
       return Either.left(
         new PlanValidationError({
@@ -199,6 +202,13 @@ export const validateGeneratePlan = (
         }),
       );
     }
+    scenarios.push({
+      id,
+      goal,
+      preconditions,
+      mutates,
+      script,
+    });
   }
 
   return Either.right(scenarios);

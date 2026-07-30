@@ -264,7 +264,9 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                       {
                         id: "dashboard-loads",
                         goal: "Show the dashboard",
-                        preconditions: [],
+                        preconditions: [
+                          "the dashboard is available",
+                        ],
                         mutates: false,
                         script:
                           "async ({ page }) => { await page.goto('/dashboard'); }",
@@ -367,43 +369,159 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
     });
   });
 
-  test("submission envelopes and Scenario count limits are decoded before acceptance", async () => {
+  test("submission envelopes and Scenario invariants are decoded before acceptance", async () => {
     const directory = await makeTemporaryDirectory();
-    const examples = [
+    const validScenario = {
+      id: "account-loads",
+      goal: "Show the account",
+      preconditions: [] as readonly string[],
+      mutates: false,
+      script: "async () => {}",
+    };
+    const examples: readonly {
+      readonly payload: unknown;
+      readonly maxScenarios: number;
+      readonly scenarioId: string;
+      readonly field: string;
+      readonly message: string;
+    }[] = [
       {
         payload: { schemaVersion: 2, scenarios: [] },
+        maxScenarios: 1,
+        scenarioId: "<submission>",
         field: "schemaVersion",
+        message:
+          "generate-plan submission requires schemaVersion 1",
       },
       {
         payload: {
           schemaVersion: 1,
           scenarios: "not an array",
         },
+        maxScenarios: 1,
+        scenarioId: "<submission>",
         field: "scenarios",
+        message:
+          "generate-plan submission requires a scenarios array",
+      },
+      {
+        payload: {
+          schemaVersion: 1,
+          scenarios: [],
+        },
+        maxScenarios: 1,
+        scenarioId: "<unknown>",
+        field: "id",
+        message: "A generate-plan submission requires a Scenario",
+      },
+      {
+        payload: {
+          schemaVersion: 1,
+          scenarios: [
+            { ...validScenario, id: "first" },
+            { ...validScenario, id: "second" },
+          ],
+        },
+        maxScenarios: 1,
+        scenarioId: "<submission>",
+        field: "scenarios",
+        message:
+          "generate-plan submission exceeds the Scenario limit of 1",
+      },
+      {
+        payload: {
+          schemaVersion: 1,
+          scenarios: [
+            validScenario,
+            validScenario,
+          ],
+        },
+        maxScenarios: 2,
+        scenarioId: validScenario.id,
+        field: "id",
+        message: `Scenario ${validScenario.id} has a duplicate required field id`,
+      },
+      {
+        payload: {
+          schemaVersion: 1,
+          scenarios: [{ ...validScenario, goal: 42 }],
+        },
+        maxScenarios: 1,
+        scenarioId: validScenario.id,
+        field: "goal",
+        message: `Scenario ${validScenario.id} has invalid required field goal`,
       },
       {
         payload: {
           schemaVersion: 1,
           scenarios: [
             {
-              id: "first",
-              goal: "First Scenario",
-              preconditions: [],
-              mutates: false,
-              script: "async () => {}",
-            },
-            {
-              id: "second",
-              goal: "Second Scenario",
-              preconditions: [],
-              mutates: false,
-              script: "async () => {}",
+              ...validScenario,
+              preconditions: "already signed in",
             },
           ],
         },
-        field: "scenarios",
+        maxScenarios: 1,
+        scenarioId: validScenario.id,
+        field: "preconditions",
+        message: `Scenario ${validScenario.id} has invalid required field preconditions`,
       },
-    ] as const;
+      {
+        payload: {
+          schemaVersion: 1,
+          scenarios: [
+            {
+              ...validScenario,
+              preconditions: ["signed in", 42],
+            },
+          ],
+        },
+        maxScenarios: 1,
+        scenarioId: validScenario.id,
+        field: "preconditions",
+        message: `Scenario ${validScenario.id} has invalid required field preconditions`,
+      },
+      {
+        payload: {
+          schemaVersion: 1,
+          scenarios: [{ ...validScenario, mutates: "no" }],
+        },
+        maxScenarios: 1,
+        scenarioId: validScenario.id,
+        field: "mutates",
+        message: `Scenario ${validScenario.id} has invalid required field mutates`,
+      },
+      {
+        payload: {
+          schemaVersion: 1,
+          scenarios: [{ ...validScenario, script: 42 }],
+        },
+        maxScenarios: 1,
+        scenarioId: validScenario.id,
+        field: "script",
+        message: `Scenario ${validScenario.id} has invalid required field script`,
+      },
+      {
+        payload: {
+          schemaVersion: 1,
+          scenarios: [{ ...validScenario, mutates: true }],
+        },
+        maxScenarios: 1,
+        scenarioId: validScenario.id,
+        field: "mutates",
+        message: `Scenario ${validScenario.id} requires mutation permission`,
+      },
+      {
+        payload: {
+          schemaVersion: 1,
+          scenarios: [{ ...validScenario, script: "42" }],
+        },
+        maxScenarios: 1,
+        scenarioId: validScenario.id,
+        field: "script",
+        message: `Scenario ${validScenario.id} has invalid required field script`,
+      },
+    ];
 
     await withHarnessBaseUrl(async (baseUrl) => {
       for (const [index, example] of examples.entries()) {
@@ -423,7 +541,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   writePassingReport: () => Effect.void,
                 },
                 planLimits: {
-                  maxScenarios: 1,
+                  maxScenarios: example.maxScenarios,
                   scenarioTimeoutMs: 30_000,
                   activeWorkBudgetMs: 300_000,
                 },
@@ -453,7 +571,9 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
             _tag: "Left",
             left: {
               _tag: "PlanValidationError",
+              scenarioId: example.scenarioId,
               field: example.field,
+              message: example.message,
             },
           },
           status: {

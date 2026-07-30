@@ -11,3 +11,13 @@ export const compileScenarioScript = <
   }
   return candidate as Script;
 };
+
+export const validateScenarioScriptSource = (
+  source: unknown,
+): string => {
+  if (typeof source !== "string") {
+    throw new Error("Scenario Script source must be a string");
+  }
+  compileScenarioScript(source);
+  return source;
+};

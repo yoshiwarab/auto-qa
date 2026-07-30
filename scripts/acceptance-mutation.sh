@@ -5,6 +5,7 @@ project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 aps_root="${AUTO_QA_APS_ROOT:-"$project_root/tmp/acceptance-pipeline-specification"}"
 generated="build/acceptance/generated"
 mutation_work="build/acceptance-mutation"
+packed="$project_root/$mutation_work/packed"
 
 if [[ ! -f "$aps_root/bb.edn" ]]; then
   echo "APS tools not found at $aps_root; run pnpm acceptance:setup." >&2
@@ -15,10 +16,23 @@ cd "$project_root"
 
 mkdir -p "build/acceptance/ir" "$generated"
 
+bash "$project_root/scripts/ensure-playwright.sh"
+
 node "$project_root/node_modules/typescript/bin/tsc" \
   --project "$project_root/tsconfig.build.json"
 
-for stem in atomic-generate-plan-rejection \
+rm -rf "$packed"
+mkdir -p "$packed"
+tarball="$(
+  pnpm pack --pack-destination "$packed" --silent
+)"
+tar -xzf "$packed/$(basename "$tarball")" -C "$packed"
+
+export AUTO_QA_PACKED_CLI="$packed/package/dist/src/cli.js"
+export PLAYWRIGHT_BROWSERS_PATH="$project_root/tmp/playwright-browsers"
+
+for stem in passing-scenario-completes-run \
+  atomic-generate-plan-rejection \
   durable-generate-plan-handoff \
   cli-durable-generate-plan-handoff \
   cli-one-active-run-per-worktree \
