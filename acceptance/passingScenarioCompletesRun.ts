@@ -8,7 +8,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
 import { chromium } from "playwright";
@@ -105,15 +105,15 @@ const makeWorld = Effect.gen(function* () {
         join(worktree, "account.tsx"),
         "export const heading = 'Account';\n",
       );
+      const planDirectory = await mkdtemp(
+        join(parent, "acceptance-plan-"),
+      );
 
       const world = {
         worktree,
         targetApplication,
         baseUrl: targetApplication.baseUrl,
-        submissionPath: join(
-          parent,
-          "acceptance-plan.json",
-        ),
+        submissionPath: join(planDirectory, "submission.json"),
       } satisfies World;
       return world;
     }),
@@ -121,11 +121,9 @@ const makeWorld = Effect.gen(function* () {
       Effect.tryPromise(async () => {
         await Promise.all([
           rm(world.worktree, { recursive: true }),
-          rm(world.submissionPath).catch(
-            (cause: NodeJS.ErrnoException) => {
-              if (cause.code !== "ENOENT") throw cause;
-            },
-          ),
+          rm(dirname(world.submissionPath), {
+            recursive: true,
+          }),
         ]);
       }).pipe(Effect.orDie),
   );
