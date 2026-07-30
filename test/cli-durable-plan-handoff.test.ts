@@ -25,6 +25,7 @@ const projectRoot = process.cwd();
 const cliPath = join(projectRoot, "dist", "src", "cli.js");
 let targetApplication: Server;
 let baseUrl: URL;
+let targetApplicationRequestCount = 0;
 
 const makeTemporaryGitWorktree = async (): Promise<string> => {
   const parent = join(projectRoot, "tmp");
@@ -120,6 +121,7 @@ beforeAll(async () => {
   );
 
   targetApplication = createServer((_request, response) => {
+    targetApplicationRequestCount += 1;
     response.end("ok");
   });
   await new Promise<void>((resolve) => {
@@ -284,6 +286,7 @@ describe("CLI durable generate-plan handoff", () => {
       join(projectRoot, "tmp", "non-git-directory-"),
     );
     temporaryDirectories.push(directory);
+    targetApplicationRequestCount = 0;
     let result: ProcessResult;
     try {
       const processResult = await execFileAsync(
@@ -324,6 +327,7 @@ describe("CLI durable generate-plan handoff", () => {
     await expect(
       pathExists(join(directory, ".auto-qa")),
     ).resolves.toBe(false);
+    expect(targetApplicationRequestCount).toBe(0);
   });
 
   test("a second start identifies the active Run without replacing it", async () => {

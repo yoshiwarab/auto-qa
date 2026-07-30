@@ -50,12 +50,18 @@ const makeTemporaryDirectory = (directoryPrefix: string) =>
   );
 
 const makeTargetApplication = Effect.acquireRelease(
-  Effect.sync(() =>
-    createServer((_request, response) => {
+  Effect.sync(() => {
+    let requestCount = 0;
+    const server = createServer((_request, response) => {
+      requestCount += 1;
       response.end("ok");
-    }),
-  ),
-  (server) =>
+    });
+    return {
+      server,
+      getRequestCount: (): number => requestCount,
+    };
+  }),
+  ({ server }) =>
     (server.listening ? close(server) : Effect.void).pipe(
       Effect.orDie,
     ),
@@ -66,7 +72,8 @@ export const makeTargetApplicationHarness = (
 ) =>
   Effect.gen(function* () {
     const directory = yield* makeTemporaryDirectory(directoryPrefix);
-    const targetApplication = yield* makeTargetApplication;
-    const baseUrl = yield* listen(targetApplication);
-    return { baseUrl, directory };
+    const { server, getRequestCount } =
+      yield* makeTargetApplication;
+    const baseUrl = yield* listen(server);
+    return { baseUrl, directory, getRequestCount };
   });

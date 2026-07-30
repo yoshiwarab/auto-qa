@@ -47,23 +47,36 @@ const inspectGitStatus = (
 
 export const findGitWorktree = (
   directory: string,
-): Effect.Effect<string, GitWorktreeRequiredError> =>
-  Effect.async<string, GitWorktreeRequiredError>((resume) => {
+): Effect.Effect<
+  string,
+  GitWorktreeRequiredError | ChangeInspectionError
+> =>
+  Effect.async<
+    string,
+    GitWorktreeRequiredError | ChangeInspectionError
+  >((resume) => {
     const child = execFile(
       "git",
       ["rev-parse", "--show-toplevel"],
       { cwd: directory, encoding: "utf8" },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
         resume(
           error === null
             ? Effect.succeed(stdout.trim())
-            : Effect.fail(
+            : stderr.includes("not a git repository")
+              ? Effect.fail(
                 new GitWorktreeRequiredError({
                   message:
                     "Auto-QA must run inside a Git worktree",
                   cause: error,
                 }),
-              ),
+                )
+              : Effect.fail(
+                  new ChangeInspectionError(
+                    "Could not locate Git worktree",
+                    error,
+                  ),
+                ),
         );
       },
     );

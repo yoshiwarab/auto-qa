@@ -31,6 +31,7 @@ type FailureEnvelope = {
 type World = {
   readonly directory: string;
   readonly baseUrl: URL;
+  readonly getRequestCount: () => number;
   processResult?: ProcessResult;
   envelope?: FailureEnvelope;
 };
@@ -39,7 +40,11 @@ const makeWorld = makeTargetApplicationHarness(
   "acceptance-non-git-",
 ).pipe(
   Effect.map(
-    ({ directory, baseUrl }): World => ({ directory, baseUrl }),
+    ({ directory, baseUrl, getRequestCount }): World => ({
+      directory,
+      baseUrl,
+      getRequestCount,
+    }),
   ),
 );
 
@@ -130,6 +135,7 @@ const handlers: readonly StepHandler<World>[] = [
         expect(world.envelope?.correlationId.length).toBeGreaterThan(
           0,
         );
+        expect(world.getRequestCount()).toBe(0);
       }),
   },
   {
