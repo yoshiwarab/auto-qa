@@ -19,6 +19,7 @@
     "lint": "eslint .",
     "mutation:cli-protocol": "stryker run --mutate src/cliProtocol.ts --testFiles test/cli-protocol.test.ts --testRunner vitest --plugins @stryker-mutator/vitest-runner --concurrency 2 --reporters clear-text,progress --ignoreStatic --incremental --incrementalFile reports/stryker-cli-protocol.json --cleanTempDir always",
     "mutation:workflow-machine": "stryker run --mutate src/workflowMachine.ts --testFiles test/workflow-machine.test.ts --testRunner vitest --plugins @stryker-mutator/vitest-runner --concurrency 2 --reporters clear-text,progress --ignoreStatic --incremental --incrementalFile reports/stryker-workflow-machine.json --cleanTempDir always",
+    "prepare": "./scripts/prepare-effect.sh",
     "test": "vitest run --config vitest.config.ts",
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "typecheck": "tsc --project tsconfig.json",
