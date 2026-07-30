@@ -5,15 +5,17 @@ import type { ScenarioRuntime } from "./scenarioRuntime.js";
 export const makeDeterministicScenarioRuntime = (
   status: AttemptStatus = "passed",
 ): ScenarioRuntime => ({
-  execute: (attempt) =>
-    Effect.succeed({
-      attempt: {
-        scenarioId: attempt.scenario.id,
-        attemptNumber: attempt.attemptNumber,
-        scriptVersion: attempt.scriptVersion,
-        status,
-        evidencePath: `runs/${attempt.runId}/scenarios/${attempt.scenario.id}/attempt-${attempt.attemptNumber}`,
-      },
-      activeWorkMs: 0,
+  execute: (attempt, environment) =>
+    Effect.sync(() => {
+      environment.checkpointActiveWork(0);
+      return {
+        attempt: {
+          scenarioId: attempt.scenario.id,
+          attemptNumber: attempt.attemptNumber,
+          scriptVersion: attempt.scriptVersion,
+          status,
+          evidencePath: `runs/${attempt.runId}/scenarios/${attempt.scenario.id}/attempt-${attempt.attemptNumber}`,
+        },
+      };
     }),
 });

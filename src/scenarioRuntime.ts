@@ -12,11 +12,11 @@ export type FrozenScenarioAttempt = {
 export type ScenarioEnvironment = {
   readonly baseUrl: URL;
   readonly timeoutMs: number;
+  readonly checkpointActiveWork: (elapsedMs: number) => void;
 };
 
 export type ScenarioExecution = {
   readonly attempt: AttemptRecord;
-  readonly activeWorkMs: number;
 };
 
 export class ScenarioRuntimeError extends Data.TaggedError(

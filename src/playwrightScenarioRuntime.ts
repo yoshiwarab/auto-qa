@@ -202,9 +202,16 @@ export const makePlaywrightScenarioRuntime = (
               status: "passed",
               evidencePath,
             },
-            activeWorkMs: Date.now() - activeWorkStartedAt,
           } as const;
-        }),
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              environment.checkpointActiveWork(
+                Date.now() - activeWorkStartedAt,
+              );
+            }),
+          ),
+        ),
       ),
       Effect.suspend(() =>
         !browserAcquired || browserReleased

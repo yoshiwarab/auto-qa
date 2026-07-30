@@ -695,6 +695,117 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
     });
   });
 
+  test("timed-out Scenario cleanup is not charged as active work", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const runId = RunId("run-timeout-cleanup-accounting");
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      const afterStart = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector: {
+                inspect: () => Effect.succeed([]),
+              },
+              scenarioRuntime: {
+                execute: (_attempt, environment) =>
+                  Effect.acquireUseRelease(
+                    Effect.void,
+                    () =>
+                      Effect.never.pipe(
+                        Effect.ensuring(
+                          Effect.sync(() => {
+                            environment.checkpointActiveWork(3);
+                          }),
+                        ),
+                      ),
+                    () => Effect.sleep(150),
+                  ),
+              },
+              runReporter: {
+                writePassingReport: () => Effect.void,
+              },
+              planLimits: {
+                maxScenarios: 1,
+                scenarioTimeoutMs: 5,
+                activeWorkBudgetMs: 1_000,
+              },
+            });
+            const started = yield* engine.dispatch(runId, {
+              type: "start",
+              baseUrl,
+            });
+            const store = yield* openSqliteRunStore(databasePath);
+            const activeWorkMs =
+              yield* store.getActiveWorkMs(runId);
+            return { started, activeWorkMs };
+          }),
+        ),
+      );
+
+      await Effect.runPromise(
+        Effect.either(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const engine = yield* createWorkflowEngine({
+                databasePath,
+                changeInspector: {
+                  inspect: () => Effect.succeed([]),
+                },
+                scenarioRuntime: {
+                  execute: (_attempt, environment) =>
+                    Effect.acquireUseRelease(
+                      Effect.void,
+                      () =>
+                        Effect.never.pipe(
+                          Effect.ensuring(
+                            Effect.sync(() => {
+                              environment.checkpointActiveWork(3);
+                            }),
+                          ),
+                        ),
+                      () => Effect.sleep(150),
+                    ),
+                },
+                runReporter: {
+                  writePassingReport: () => Effect.void,
+                },
+              });
+              return yield* engine.dispatch(runId, {
+                type: "submitJob",
+                jobId: afterStart.started.pendingJob.id,
+                payload: {
+                  schemaVersion: 1,
+                  scenarios: [
+                    {
+                      id: "times-out",
+                      goal: "Time out before slow cleanup",
+                      preconditions: [],
+                      mutates: false,
+                      script: "async () => {}",
+                    },
+                  ],
+                },
+              });
+            }),
+          ),
+        ),
+      );
+
+      const recorded = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const store = yield* openSqliteRunStore(databasePath);
+            return yield* store.getActiveWorkMs(runId);
+          }),
+        ),
+      );
+      expect(recorded - afterStart.activeWorkMs).toBeLessThan(100);
+    });
+  });
+
   test("a restarted Turn enforces the Plan limits persisted with its Run", async () => {
     const directory = await makeTemporaryDirectory();
     const databasePath = join(directory, "state.db");

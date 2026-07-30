@@ -142,7 +142,13 @@ export const AUTOMATIC_PHASES = {
       attempt: Parameters<ScenarioRuntime["execute"]>[0],
       baseUrl: URL,
       timeoutMs: number,
-    ) => runtime.execute(attempt, { baseUrl, timeoutMs }),
+      checkpointActiveWork: (elapsedMs: number) => void,
+    ) =>
+      runtime.execute(attempt, {
+        baseUrl,
+        timeoutMs,
+        checkpointActiveWork,
+      }),
   },
   reporting: {
     recoveryPolicy: "rerun",
@@ -462,6 +468,7 @@ export const makeWorkflowEngine = ({
                 );
               }
               const startedAt = yield* Clock.currentTimeMillis;
+              let activeWorkCheckpointMs: number | undefined;
               const scenarioLimitIsBinding =
                 runLimits.scenarioTimeoutMs <= remainingWork;
               const effectiveTimeout = Math.min(
@@ -480,6 +487,9 @@ export const makeWorkflowEngine = ({
                   },
                   persisted.baseUrl,
                   effectiveTimeout,
+                  (elapsedMs) => {
+                    activeWorkCheckpointMs = elapsedMs;
+                  },
                   ).pipe(
                     Effect.timeoutFail({
                       duration: effectiveTimeout,
@@ -501,9 +511,8 @@ export const makeWorkflowEngine = ({
               yield* runStore.recordActiveWorkMs(
                 lease,
                 runId,
-                execution._tag === "Right"
-                  ? execution.right.activeWorkMs
-                  : (yield* Clock.currentTimeMillis) - startedAt,
+                activeWorkCheckpointMs ??
+                  (yield* Clock.currentTimeMillis) - startedAt,
               );
               if (execution._tag === "Left") {
                 return yield* Effect.fail(execution.left);
