@@ -24,6 +24,7 @@ swarmforge/scripts/
 
 # local agent tooling
 .expect/
+.repos/effect
 
 # debug logs
 npm-debug.log*
