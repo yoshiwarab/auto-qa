@@ -38,7 +38,7 @@ const asRecord = (
 
 export const validateGeneratePlan = (
   submission: GeneratePlanSubmission,
-): Either.Either<readonly ScenarioSubmission[], PlanValidationError> => {
+): Either.Either<void, PlanValidationError> => {
   for (const scenario of submission.scenarios) {
     const candidate = asRecord(scenario);
     const scenarioId =
@@ -60,7 +60,5 @@ export const validateGeneratePlan = (
     }
   }
 
-  return Either.right(
-    submission.scenarios as readonly ScenarioSubmission[],
-  );
+  return Either.right(undefined);
 };

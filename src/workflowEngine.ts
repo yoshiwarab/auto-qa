@@ -127,6 +127,35 @@ const recoveredSnapshot = (
         }),
       );
 
+const validatePendingGeneratePlan = (
+  run: RunRecord,
+  event: SubmitJobEvent,
+  runStore: RunStore,
+): Effect.Effect<
+  void,
+  PlanValidationError | InvalidTransitionError | WorkflowStoreError
+> =>
+  Effect.gen(function* () {
+    const pendingJob = yield* runStore.getPendingJob(run.runId);
+    if (
+      run.phase !== "awaitingAgent" ||
+      pendingJob === null ||
+      pendingJob.id !== event.jobId
+    ) {
+      return yield* Effect.fail(
+        new InvalidTransitionError({
+          phase: run.phase,
+          event: event.type,
+          allowedEvents: allowedEvents(run.phase),
+        }),
+      );
+    }
+    const validation = validateGeneratePlan(event.payload);
+    if (validation._tag === "Left") {
+      return yield* Effect.fail(validation.left);
+    }
+  });
+
 const createGeneratePlanJob = (
   snapshot: MachineSnapshot,
   changes: readonly Change[],
@@ -238,24 +267,11 @@ export const makeWorkflowEngine = ({
                 new RunNotFoundError({ runId }),
               );
             }
-            const pendingJob = yield* runStore.getPendingJob(runId);
-            if (
-              persisted.phase !== "awaitingAgent" ||
-              pendingJob === null ||
-              pendingJob.id !== event.jobId
-            ) {
-              return yield* Effect.fail(
-                new InvalidTransitionError({
-                  phase: persisted.phase,
-                  event: event.type,
-                  allowedEvents: allowedEvents(persisted.phase),
-                }),
-              );
-            }
-            const validation = validateGeneratePlan(event.payload);
-            if (validation._tag === "Left") {
-              return yield* Effect.fail(validation.left);
-            }
+            yield* validatePendingGeneratePlan(
+              persisted,
+              event,
+              runStore,
+            );
             return yield* Effect.fail(
               new InvalidTransitionError({
                 phase: persisted.phase,
