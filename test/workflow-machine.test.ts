@@ -55,6 +55,14 @@ const eventFixtures = {
     type: "abandon",
     reason: "superseded",
   }),
+  submitJob: (): MachineEvent => ({
+    type: "submitJob",
+    jobId: "machine-run:generate-plan:1",
+    payload: {
+      schemaVersion: 1,
+      scenarios: [],
+    },
+  }),
 } satisfies Record<MachineEventType, () => MachineEvent>;
 
 const eventTypes = Object.keys(

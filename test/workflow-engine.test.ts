@@ -184,6 +184,84 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
     });
   });
 
+  test("a mixed invalid plan is rejected atomically", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const runId = RunId("run-invalid-plan");
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      const result = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine =
+              yield* createNoChangeWorkflowEngine(databasePath);
+            const started = yield* engine.dispatch(runId, {
+              type: "start",
+              baseUrl,
+            });
+            const rejected = yield* Effect.either(
+              engine.dispatch(runId, {
+                type: "submitJob",
+                jobId: started.pendingJob.id,
+                payload: {
+                  schemaVersion: 1,
+                  scenarios: [
+                    {
+                      id: "dashboard-loads",
+                      goal: "Show the dashboard",
+                      preconditions: [],
+                      mutates: false,
+                      script:
+                        "async ({ page }) => { await page.goto('/dashboard'); }",
+                    },
+                    {
+                      id: "checkout-submits",
+                      preconditions: ["a product is in the cart"],
+                      mutates: true,
+                      script:
+                        "async ({ page }) => { await page.getByRole('button', { name: 'Checkout' }).click(); }",
+                    },
+                  ],
+                },
+              }),
+            );
+            return { rejected, pendingJob: started.pendingJob };
+          }),
+        ),
+      );
+
+      expect(result.rejected).toMatchObject({
+        _tag: "Left",
+        left: {
+          _tag: "PlanValidationError",
+          scenarioId: "checkout-submits",
+          field: "goal",
+        },
+      });
+
+      const restarted = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine =
+              yield* createNoChangeWorkflowEngine(databasePath);
+            return {
+              status: yield* engine.getStatus(runId),
+              pendingJob: yield* engine.getPendingJob(runId),
+            };
+          }),
+        ),
+      );
+
+      expect(restarted).toEqual({
+        status: {
+          runId,
+          phase: "awaitingAgent",
+        },
+        pendingJob: result.pendingJob,
+      });
+    });
+  });
+
   test("a restarted engine reruns interrupted deterministic inspection", async () => {
     const directory = await makeTemporaryDirectory();
     const databasePath = join(directory, "state.db");

@@ -26,7 +26,12 @@ export const generateDurablePlanEntrypoint = async (
   );
   const featurePath = normalizePath(join("features", `${stem}.feature`));
   const binding =
-    stem === "workflow-engine-fenced-turn"
+    stem === "atomic-generate-plan-rejection"
+      ? {
+          module: "atomicGeneratePlanRejection",
+          name: "atomicGeneratePlanRejection",
+        }
+      : stem === "workflow-engine-fenced-turn"
       ? {
           module: "workflowFencedTurn",
           name: "workflowFencedTurn",

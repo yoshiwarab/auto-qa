@@ -1,4 +1,8 @@
 import { Effect } from "effect";
+import {
+  PlanValidationError,
+  validateGeneratePlan,
+} from "./planValidation.js";
 import type {
   ActiveRunExistsError,
   RunBusyError,
@@ -20,6 +24,7 @@ import {
   type MachineSnapshot,
   type RunId,
   type StartEvent,
+  type SubmitJobEvent,
 } from "./workflowMachine.js";
 import type {
   Change,
@@ -55,6 +60,7 @@ export type WorkflowError =
   | ActiveRunExistsError
   | ChangeInspectionError
   | InvalidTransitionError
+  | PlanValidationError
   | RunBusyError
   | RunNotFoundError
   | TurnOwnershipLostError
@@ -70,6 +76,10 @@ export interface WorkflowEngine {
       runId: RunId,
       event: AbandonEvent,
     ): Effect.Effect<RunStatus, WorkflowError>;
+    (
+      runId: RunId,
+      event: SubmitJobEvent,
+    ): Effect.Effect<DispatchResult, WorkflowError>;
   };
   readonly getPendingJob: (
     runId: RunId,
@@ -222,6 +232,38 @@ export const makeWorkflowEngine = ({
     withTurn(runId, makeTurnOwner(), runStore, (lease) =>
         Effect.gen(function* () {
           const persisted = yield* runStore.loadRun(runId);
+          if (event.type === "submitJob") {
+            if (persisted === null) {
+              return yield* Effect.fail(
+                new RunNotFoundError({ runId }),
+              );
+            }
+            const pendingJob = yield* runStore.getPendingJob(runId);
+            if (
+              persisted.phase !== "awaitingAgent" ||
+              pendingJob === null ||
+              pendingJob.id !== event.jobId
+            ) {
+              return yield* Effect.fail(
+                new InvalidTransitionError({
+                  phase: persisted.phase,
+                  event: event.type,
+                  allowedEvents: allowedEvents(persisted.phase),
+                }),
+              );
+            }
+            const validation = validateGeneratePlan(event.payload);
+            if (validation._tag === "Left") {
+              return yield* Effect.fail(validation.left);
+            }
+            return yield* Effect.fail(
+              new InvalidTransitionError({
+                phase: persisted.phase,
+                event: event.type,
+                allowedEvents: allowedEvents(persisted.phase),
+              }),
+            );
+          }
           if (event.type === "abandon") {
             if (persisted === null) {
               return yield* Effect.fail(

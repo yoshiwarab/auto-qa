@@ -11,6 +11,12 @@ export {
 } from "./workflowEngine.js";
 
 export {
+  PlanValidationError,
+  type GeneratePlanSubmission,
+  type ScenarioSubmission,
+} from "./planValidation.js";
+
+export {
   InvalidTransitionError,
   type AbandonEvent,
   RunId,
@@ -22,6 +28,7 @@ export {
   type MachinePhase,
   type MachineSnapshot,
   type RunPhase,
+  type SubmitJobEvent,
 } from "./workflowMachine.js";
 
 export { createWorkflowEngine } from "./nodeWorkflowEngine.js";
