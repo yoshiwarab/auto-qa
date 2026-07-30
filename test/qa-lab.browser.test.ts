@@ -79,4 +79,7 @@ test("QA Lab supports deterministic Account and not-found routes", async () => {
   expect(browserErrors).toEqual([]);
   expect(qaLab.isRunning()).toBe(true);
   await context.close();
+  await qaLab.stop();
+  expect(qaLab.isRunning()).toBe(false);
+  await qaLab.stop();
 });

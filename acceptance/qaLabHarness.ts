@@ -8,6 +8,28 @@ export type QaLabProcess = {
   readonly stop: () => Promise<void>;
 };
 
+const hasStopped = (child: ChildProcess): boolean =>
+  child.exitCode !== null || child.signalCode !== null;
+
+const stopChild = async (child: ChildProcess): Promise<void> => {
+  if (hasStopped(child)) return;
+  await new Promise<void>((resolve, reject) => {
+    const finish = (): void => {
+      child.off("error", fail);
+      resolve();
+    };
+    const fail = (cause: Error): void => {
+      child.off("exit", finish);
+      reject(cause);
+    };
+    child.once("exit", finish);
+    child.once("error", fail);
+    if (!child.kill("SIGTERM") && hasStopped(child)) {
+      finish();
+    }
+  });
+};
+
 const reserveEphemeralPort = async (): Promise<number> => {
   const server = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -34,7 +56,7 @@ const waitUntilReachable = async (
 ): Promise<void> => {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
+    if (hasStopped(child)) {
       throw new Error(
         `QA Lab exited before readiness with code ${child.exitCode}\n${output()}`,
       );
@@ -89,22 +111,13 @@ export const startQaLab = async (
   try {
     await waitUntilReachable(child, baseUrl, () => chunks.join(""));
   } catch (cause) {
-    if (child.exitCode === null) child.kill("SIGTERM");
+    await stopChild(child);
     throw cause;
   }
 
   return {
     baseUrl,
-    isRunning: () => child.exitCode === null,
-    stop: async () => {
-      if (child.exitCode !== null) return;
-      await new Promise<void>((resolve, reject) => {
-        child.once("exit", () => resolve());
-        child.once("error", reject);
-        if (!child.kill("SIGTERM") && child.exitCode !== null) {
-          resolve();
-        }
-      });
-    },
+    isRunning: () => !hasStopped(child),
+    stop: () => stopChild(child),
   };
 };

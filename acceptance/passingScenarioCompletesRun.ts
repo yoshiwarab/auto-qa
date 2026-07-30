@@ -11,6 +11,7 @@ import {
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
+import { chromium } from "playwright";
 import { expect } from "vitest";
 import {
   parseOnlyJsonLine,
@@ -52,7 +53,6 @@ type World = {
   readonly baseUrl: URL;
   readonly targetApplication: QaLabProcess;
   readonly submissionPath: string;
-  servedHeading: string;
   scenarioId?: string;
   script?: string;
   start?: ProcessResult;
@@ -107,7 +107,6 @@ const makeWorld = Effect.acquireRelease(
     const targetApplication = await startQaLab(process.cwd());
     const world = {
       worktree,
-      servedHeading: "",
       targetApplication,
       baseUrl: targetApplication.baseUrl,
       submissionPath: join(
@@ -179,8 +178,26 @@ const handlers: readonly StepHandler<World>[] = [
     pattern:
       /^a harness-owned Target Application serves accessible heading <([A-Za-z0-9_]+)> at a harness-supplied Base URL$/,
     run: (world, example, captures) =>
-      Effect.sync(() => {
-        world.servedHeading = exampleValue(example, captures[0]);
+      Effect.tryPromise(async () => {
+        const expectedHeading = exampleValue(
+          example,
+          captures[0],
+        );
+        const browser = await chromium.launch({ headless: true });
+        try {
+          const page = await browser.newPage();
+          await page.goto(world.baseUrl.href);
+          expect(
+            await page
+              .getByRole("heading", {
+                name: expectedHeading,
+                exact: true,
+              })
+              .count(),
+          ).toBe(1);
+        } finally {
+          await browser.close();
+        }
       }),
   },
   {
