@@ -66,15 +66,25 @@ type ProcessResult = {
   readonly stderr: string;
 };
 
+type RunCliOptions = {
+  readonly currentDirectory?: string;
+  readonly environment?: NodeJS.ProcessEnv;
+};
+
 const runCli = async (
   worktree: string,
   args: readonly string[],
+  options: RunCliOptions = {},
 ): Promise<ProcessResult> => {
   try {
     const result = await execFileAsync(
       process.execPath,
       [cliPath, ...args],
-      { cwd: join(worktree, "src") },
+      {
+        cwd:
+          options.currentDirectory ?? join(worktree, "src"),
+        env: options.environment,
+      },
     );
     return {
       exitCode: 0,
@@ -287,32 +297,17 @@ describe("CLI durable generate-plan handoff", () => {
     );
     temporaryDirectories.push(directory);
     targetApplicationRequestCount = 0;
-    let result: ProcessResult;
-    try {
-      const processResult = await execFileAsync(
-        process.execPath,
-        [cliPath, "start", "--base-url", baseUrl.href],
-        {
-          cwd: directory,
-          env: {
-            ...process.env,
-            GIT_CEILING_DIRECTORIES: projectRoot,
-          },
+    const result = await runCli(
+      directory,
+      ["start", "--base-url", baseUrl.href],
+      {
+        currentDirectory: directory,
+        environment: {
+          ...process.env,
+          GIT_CEILING_DIRECTORIES: projectRoot,
         },
-      );
-      result = { exitCode: 0, ...processResult };
-    } catch (cause) {
-      const failure = cause as {
-        readonly code?: number;
-        readonly stdout?: string;
-        readonly stderr?: string;
-      };
-      result = {
-        exitCode: failure.code ?? 1,
-        stdout: failure.stdout ?? "",
-        stderr: failure.stderr ?? "",
-      };
-    }
+      },
+    );
 
     expect(result).toMatchObject({ exitCode: 1, stderr: "" });
     expect(parseOnlyJsonLine(result.stdout)).toMatchObject({
@@ -333,29 +328,13 @@ describe("CLI durable generate-plan handoff", () => {
   test("Git tool failures remain change inspection errors", async () => {
     const worktree = await makeTemporaryGitWorktree();
     targetApplicationRequestCount = 0;
-    let result: ProcessResult;
-    try {
-      const processResult = await execFileAsync(
-        process.execPath,
-        [cliPath, "start", "--base-url", baseUrl.href],
-        {
-          cwd: join(worktree, "src"),
-          env: { ...process.env, PATH: "" },
-        },
-      );
-      result = { exitCode: 0, ...processResult };
-    } catch (cause) {
-      const failure = cause as {
-        readonly code?: number;
-        readonly stdout?: string;
-        readonly stderr?: string;
-      };
-      result = {
-        exitCode: failure.code ?? 1,
-        stdout: failure.stdout ?? "",
-        stderr: failure.stderr ?? "",
-      };
-    }
+    const result = await runCli(
+      worktree,
+      ["start", "--base-url", baseUrl.href],
+      {
+        environment: { ...process.env, PATH: "" },
+      },
+    );
 
     expect(result).toMatchObject({ exitCode: 1, stderr: "" });
     expect(parseOnlyJsonLine(result.stdout)).toMatchObject({

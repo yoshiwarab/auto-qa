@@ -20,6 +20,17 @@ export type FeatureBindings<World> = {
   readonly handlers: readonly StepHandler<World>[];
 };
 
+export const exampleValue = (
+  example: Readonly<Record<string, string>>,
+  name: string | undefined,
+): string => {
+  const value = name === undefined ? undefined : example[name];
+  if (value === undefined) {
+    throw new Error(`Missing example: ${name}`);
+  }
+  return value;
+};
+
 const featureForCurrentRun = (
   generatedFeature: GherkinFeature,
 ): GherkinFeature => {

@@ -26,7 +26,7 @@ export {
 
 export { createWorkflowEngine } from "./nodeWorkflowEngine.js";
 
-export { GitWorktreeRequiredError } from "./gitChangeInspector.js";
+export { GitWorktreeRequiredError } from "./gitWorktree.js";
 
 export {
   ActiveRunExistsError,

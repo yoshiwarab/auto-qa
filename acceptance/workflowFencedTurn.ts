@@ -8,9 +8,10 @@ import {
   type DispatchResult,
   type WorkflowError,
 } from "../src/index.js";
-import type {
-  FeatureBindings,
-  StepHandler,
+import {
+  exampleValue,
+  type FeatureBindings,
+  type StepHandler,
 } from "./runtime.js";
 import { makeTargetApplicationHarness } from "./targetApplicationHarness.js";
 
@@ -66,15 +67,6 @@ const makeWorld = Effect.gen(function* () {
       }).pipe(Effect.orDie),
   );
 });
-
-const exampleValue = (
-  example: Readonly<Record<string, string>>,
-  name: string | undefined,
-): string => {
-  const value = name === undefined ? undefined : example[name];
-  if (value === undefined) throw new Error(`Missing example: ${name}`);
-  return value;
-};
 
 const handlers: readonly StepHandler<World>[] = [
   {

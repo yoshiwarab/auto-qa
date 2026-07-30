@@ -11,18 +11,18 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
 import { expect } from "vitest";
-import type {
-  FeatureBindings,
-  StepHandler,
+import {
+  parseOnlyJsonLine,
+  runCliProcess,
+  type ProcessResult,
+} from "./cliProcessHarness.js";
+import {
+  exampleValue,
+  type FeatureBindings,
+  type StepHandler,
 } from "./runtime.js";
 
 const execFileAsync = promisify(execFile);
-
-type ProcessResult = {
-  readonly exitCode: number;
-  readonly stdout: string;
-  readonly stderr: string;
-};
 
 type Envelope = {
   readonly schemaVersion: number;
@@ -125,48 +125,17 @@ const makeWorld = Effect.acquireRelease(
     }).pipe(Effect.orDie),
 ).pipe(Effect.map(({ world }) => world));
 
-const exampleValue = (
-  example: Readonly<Record<string, string>>,
-  name: string | undefined,
-): string => {
-  const value = name === undefined ? undefined : example[name];
-  if (value === undefined) throw new Error(`Missing example: ${name}`);
-  return value;
-};
-
 const runCli = async (
   world: World,
   args: readonly string[],
-): Promise<ProcessResult> => {
-  try {
-    const result = await execFileAsync(
-      process.execPath,
-      [join(process.cwd(), "dist", "src", "cli.js"), ...args],
-      { cwd: join(world.worktree, "src") },
-    );
-    return { exitCode: 0, ...result };
-  } catch (cause) {
-    const failure = cause as {
-      readonly code?: number;
-      readonly stdout?: string;
-      readonly stderr?: string;
-    };
-    return {
-      exitCode: failure.code ?? 1,
-      stdout: failure.stdout ?? "",
-      stderr: failure.stderr ?? "",
-    };
-  }
-};
+): Promise<ProcessResult> =>
+  runCliProcess({
+    cwd: join(world.worktree, "src"),
+    args,
+  });
 
-const envelope = (result: ProcessResult | undefined): Envelope => {
-  const stdout = result?.stdout ?? "";
-  expect(stdout.endsWith("\n")).toBe(true);
-  const lines = stdout.split("\n");
-  expect(lines).toHaveLength(2);
-  expect(lines[1]).toBe("");
-  return JSON.parse(lines[0] ?? "null") as Envelope;
-};
+const envelope = (result: ProcessResult | undefined): Envelope =>
+  parseOnlyJsonLine<Envelope>(result);
 
 const startRun = async (world: World): Promise<void> => {
   world.start = await runCli(world, [

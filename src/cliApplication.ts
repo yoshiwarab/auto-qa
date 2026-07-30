@@ -2,10 +2,8 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Data, Effect } from "effect";
 import { cliSuccess } from "./cliProtocol.js";
-import {
-  findGitWorktree,
-  makeGitChangeInspector,
-} from "./gitChangeInspector.js";
+import { makeGitChangeInspector } from "./gitChangeInspector.js";
+import { findGitWorktree } from "./gitWorktree.js";
 import { RunId } from "./workflowMachine.js";
 
 export type CliCommand =

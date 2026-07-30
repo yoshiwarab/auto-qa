@@ -7,6 +7,7 @@ export default defineConfig({
         "src/cli.ts",
         "src/cliApplication.ts",
         "src/gitChangeInspector.ts",
+        "src/gitWorktree.ts",
       ],
       include: ["src/**/*.ts"],
       reporter: ["text"],
