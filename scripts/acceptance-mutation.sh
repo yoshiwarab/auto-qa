@@ -18,6 +18,8 @@ mkdir -p "build/acceptance/ir" "$generated"
 
 bash "$project_root/scripts/ensure-playwright.sh"
 
+pnpm --dir "$project_root" --filter @auto-qa/qa-lab build
+
 node "$project_root/node_modules/typescript/bin/tsc" \
   --project "$project_root/tsconfig.build.json"
 
