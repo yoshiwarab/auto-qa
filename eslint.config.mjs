@@ -8,6 +8,7 @@ export default tseslint.config(
       ".worktrees/**",
       "build/**",
       "dist/**",
+      "**/dist/**",
       "node_modules/**",
       "swarmforge/scripts/**",
       "tmp/**",

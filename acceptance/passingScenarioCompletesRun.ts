@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { createServer, type Server } from "node:http";
 import {
   access,
   mkdir,
@@ -9,7 +8,6 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
@@ -19,6 +17,10 @@ import {
   runCliProcess,
   type ProcessResult,
 } from "./cliProcessHarness.js";
+import {
+  startQaLab,
+  type QaLabProcess,
+} from "./qaLabHarness.js";
 import {
   exampleValue,
   type FeatureBindings,
@@ -48,7 +50,7 @@ type Envelope = {
 type World = {
   readonly worktree: string;
   readonly baseUrl: URL;
-  readonly targetApplication: Server;
+  readonly targetApplication: QaLabProcess;
   readonly submissionPath: string;
   servedHeading: string;
   scenarioId?: string;
@@ -68,23 +70,6 @@ const runGit = (
   args: readonly string[],
 ): Promise<void> =>
   execFileAsync("git", args, { cwd }).then(() => undefined);
-
-const listen = (server: Server): Promise<URL> =>
-  new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address() as AddressInfo;
-      resolve(new URL(`http://127.0.0.1:${address.port}`));
-    });
-  });
-
-const close = (server: Server): Promise<void> =>
-  new Promise((resolve, reject) => {
-    server.close((cause) => {
-      if (cause) reject(cause);
-      else resolve();
-    });
-  });
 
 const makeWorld = Effect.acquireRelease(
   Effect.tryPromise(async () => {
@@ -119,29 +104,22 @@ const makeWorld = Effect.acquireRelease(
       "export const heading = 'Account';\n",
     );
 
+    const targetApplication = await startQaLab(process.cwd());
     const world = {
       worktree,
       servedHeading: "",
-      targetApplication: undefined as unknown as Server,
-      baseUrl: undefined as unknown as URL,
+      targetApplication,
+      baseUrl: targetApplication.baseUrl,
       submissionPath: join(
         parent,
         `acceptance-plan-${Date.now()}.json`,
       ),
     } satisfies World;
-    const targetApplication = createServer((_request, response) => {
-      response.setHeader("content-type", "text/html");
-      response.end(
-        `<main><h1>${world.servedHeading}</h1></main>`,
-      );
-    });
-    world.targetApplication = targetApplication;
-    world.baseUrl = await listen(targetApplication);
     return world;
   }),
   (world) =>
     Effect.tryPromise(async () => {
-      await close(world.targetApplication);
+      await world.targetApplication.stop();
       await Promise.all([
         rm(world.worktree, { recursive: true }),
         rm(world.submissionPath).catch(
@@ -454,12 +432,10 @@ const handlers: readonly StepHandler<World>[] = [
       /^the harness-owned Target Application remains running$/,
     run: (world) =>
       Effect.tryPromise(async () => {
-        expect(world.targetApplication.listening).toBe(true);
+        expect(world.targetApplication.isRunning()).toBe(true);
         await expect(
-          fetch(world.baseUrl).then((response) => response.text()),
-        ).resolves.toContain(
-          `<h1>${world.servedHeading}</h1>`,
-        );
+          fetch(world.baseUrl).then((response) => response.ok),
+        ).resolves.toBe(true);
       }),
   },
 ];

@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "files": [
+    "dist/src"
+  ],
   "bin": {
     "auto-qa": "dist/src/cli.js"
   },
@@ -24,7 +27,7 @@
     "prepare": "./scripts/prepare-effect.sh",
     "test": "vitest run --config vitest.config.ts",
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
-    "typecheck": "tsc --project tsconfig.json",
+    "typecheck": "tsc --project tsconfig.json && pnpm --filter @auto-qa/qa-lab typecheck",
     "swarm:start": "bash scripts/swarmforge-project.sh start",
     "swarm:start:ghostty": "bash scripts/swarmforge-project.sh start ghostty",
     "swarm:start:terminal": "bash scripts/swarmforge-project.sh start current",

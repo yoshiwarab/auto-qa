@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { createServer, type Server } from "node:http";
 import {
   access,
   mkdir,
@@ -10,7 +9,6 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -20,6 +18,10 @@ import {
   expect,
   test,
 } from "vitest";
+import {
+  startQaLab,
+  type QaLabProcess,
+} from "../acceptance/qaLabHarness.js";
 
 const execFileAsync = promisify(execFile);
 const projectRoot = process.cwd();
@@ -30,7 +32,7 @@ if (cliPath === undefined) {
   );
 }
 const temporaryDirectories: string[] = [];
-let targetApplication: Server;
+let targetApplication: QaLabProcess | undefined;
 let baseUrl: URL;
 
 type ProcessResult = {
@@ -148,15 +150,8 @@ const makeChangedWorktree = async (): Promise<string> => {
 };
 
 beforeAll(async () => {
-  targetApplication = createServer((_request, response) => {
-    response.setHeader("content-type", "text/html");
-    response.end("<main><h1>Account</h1></main>");
-  });
-  await new Promise<void>((resolve) => {
-    targetApplication.listen(0, "127.0.0.1", resolve);
-  });
-  const address = targetApplication.address() as AddressInfo;
-  baseUrl = new URL(`http://127.0.0.1:${address.port}`);
+  targetApplication = await startQaLab(projectRoot);
+  baseUrl = targetApplication.baseUrl;
 });
 
 afterEach(async () => {
@@ -168,12 +163,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  await new Promise<void>((resolve, reject) => {
-    targetApplication.close((cause) => {
-      if (cause) reject(cause);
-      else resolve();
-    });
-  });
+  await targetApplication?.stop();
 });
 
 test(
@@ -227,7 +217,7 @@ test(
     ], secretCanary);
     processOutput.push(submit.stdout, submit.stderr);
     const submitted = parseEnvelope(submit);
-    expect(submit).toMatchObject({ exitCode: 0 });
+    expect(submit, submit.stdout).toMatchObject({ exitCode: 0 });
     expect(submitted.result).toMatchObject({
       phase: "completed",
       outcome: "passed",
@@ -324,8 +314,9 @@ test(
     ).rejects.toThrow();
     await expect(ownedBrowserProcesses()).resolves.toEqual([]);
 
+    expect(targetApplication?.isRunning()).toBe(true);
     await expect(fetch(baseUrl).then((response) => response.text()))
-      .resolves.toContain("<h1>Account</h1>");
+      .resolves.toContain("Account");
   },
   30_000,
 );
