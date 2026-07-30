@@ -7,5 +7,6 @@ export default defineConfig({
       "build/acceptance/generated/passing-scenario-completes-run.acceptance.test.ts",
     ],
     testTimeout: 30_000,
+    fileParallelism: false,
   },
 });

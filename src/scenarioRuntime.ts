@@ -14,6 +14,11 @@ export type ScenarioEnvironment = {
   readonly timeoutMs: number;
 };
 
+export type ScenarioExecution = {
+  readonly attempt: AttemptRecord;
+  readonly activeWorkMs: number;
+};
+
 export class ScenarioRuntimeError extends Data.TaggedError(
   "ScenarioRuntimeError",
 )<{
@@ -25,5 +30,5 @@ export interface ScenarioRuntime {
   readonly execute: (
     attempt: FrozenScenarioAttempt,
     environment: ScenarioEnvironment,
-  ) => Effect.Effect<AttemptRecord, ScenarioRuntimeError>;
+  ) => Effect.Effect<ScenarioExecution, ScenarioRuntimeError>;
 }

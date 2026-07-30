@@ -7,10 +7,13 @@ export const makeDeterministicScenarioRuntime = (
 ): ScenarioRuntime => ({
   execute: (attempt) =>
     Effect.succeed({
-      scenarioId: attempt.scenario.id,
-      attemptNumber: attempt.attemptNumber,
-      scriptVersion: attempt.scriptVersion,
-      status,
-      evidencePath: `runs/${attempt.runId}/scenarios/${attempt.scenario.id}/attempt-${attempt.attemptNumber}`,
+      attempt: {
+        scenarioId: attempt.scenario.id,
+        attemptNumber: attempt.attemptNumber,
+        scriptVersion: attempt.scriptVersion,
+        status,
+        evidencePath: `runs/${attempt.runId}/scenarios/${attempt.scenario.id}/attempt-${attempt.attemptNumber}`,
+      },
+      activeWorkMs: 0,
     }),
 });

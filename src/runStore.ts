@@ -4,6 +4,7 @@ import type {
   RunId,
 } from "./workflowMachine.js";
 import type {
+  PlanLimits,
   ScenarioSubmission,
 } from "./planValidation.js";
 import type {
@@ -60,6 +61,7 @@ export type TurnLease = {
 
 export type RunRecord = RunStatus & {
   readonly baseUrl: URL;
+  readonly planLimits: PlanLimits;
 };
 
 export interface RunStore {
@@ -81,6 +83,7 @@ export interface RunStore {
     runId: RunId,
     baseUrl: URL,
     recoveryPolicy: RecoveryPolicy,
+    planLimits: PlanLimits,
   ) => Effect.Effect<
     void,
     | ActiveRunExistsError

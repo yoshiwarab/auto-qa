@@ -19,6 +19,7 @@ import {
   type RunPhase,
 } from "./workflowMachine.js";
 import type { ScenarioSubmission } from "./planValidation.js";
+import type { PlanLimits } from "./planValidation.js";
 import { prepareSqliteRunStoreSchema } from "./sqliteRunStoreSchema.js";
 import type {
   AttemptRecord,
@@ -43,6 +44,9 @@ type RunRow = {
   readonly base_url: string;
   readonly abandon_reason: string | null;
   readonly outcome: string | null;
+  readonly max_scenarios: number;
+  readonly scenario_timeout_ms: number;
+  readonly active_work_budget_ms: number;
 };
 
 type AttemptRow = {
@@ -122,6 +126,7 @@ export class SqliteRunStore implements RunStore {
   private readonly hasAbandonReason: boolean;
   private readonly hasOutcome: boolean;
   private readonly hasJobCompletion: boolean;
+  private readonly hasPlanLimits: boolean;
 
   constructor(
     private readonly database: DatabaseSync,
@@ -134,6 +139,7 @@ export class SqliteRunStore implements RunStore {
     this.hasAbandonReason = schema.hasAbandonReason;
     this.hasOutcome = schema.hasOutcome;
     this.hasJobCompletion = schema.hasJobCompletion;
+    this.hasPlanLimits = schema.hasPlanLimits;
   }
 
   close(): void {
@@ -206,12 +212,17 @@ export class SqliteRunStore implements RunStore {
       const row = asRunRow(
         this.database
           .prepare(
-            `SELECT run_id, phase, base_url, ${this.abandonReasonSelection()}, ${this.outcomeSelection()} FROM runs WHERE run_id = ?`,
+            `SELECT run_id, phase, base_url, ${this.abandonReasonSelection()}, ${this.outcomeSelection()}, ${this.planLimitsSelection()} FROM runs WHERE run_id = ?`,
           )
           .get(runId),
       );
       if (row === undefined) return null;
       const phase = decodePhase(row.phase);
+      const planLimits = {
+        maxScenarios: row.max_scenarios,
+        scenarioTimeoutMs: row.scenario_timeout_ms,
+        activeWorkBudgetMs: row.active_work_budget_ms,
+      };
       if (phase === "abandoned") {
         if (row.abandon_reason === null) {
           throw new Error(
@@ -223,6 +234,7 @@ export class SqliteRunStore implements RunStore {
           phase,
           baseUrl: new URL(row.base_url),
           reason: row.abandon_reason,
+          planLimits,
         };
       }
       if (phase === "completed") {
@@ -241,12 +253,14 @@ export class SqliteRunStore implements RunStore {
           baseUrl: new URL(row.base_url),
           outcome: row.outcome,
           attempts: this.readAttempts(RunId(row.run_id)),
+          planLimits,
         };
       }
       return {
         runId: RunId(row.run_id),
         phase,
         baseUrl: new URL(row.base_url),
+        planLimits,
       };
     });
   }
@@ -256,6 +270,7 @@ export class SqliteRunStore implements RunStore {
     runId: RunId,
     baseUrl: URL,
     recoveryPolicy: RecoveryPolicy,
+    planLimits: PlanLimits,
   ): Effect.Effect<
     void,
     | ActiveRunExistsError
@@ -272,7 +287,7 @@ export class SqliteRunStore implements RunStore {
           const activeRun = asRunRow(
             this.database
               .prepare(
-                `SELECT run_id, phase, base_url, ${this.abandonReasonSelection()}, ${this.outcomeSelection()} FROM runs WHERE phase NOT IN ('abandoned', 'completed') LIMIT 1`,
+                `SELECT run_id, phase, base_url, ${this.abandonReasonSelection()}, ${this.outcomeSelection()}, ${this.planLimitsSelection()} FROM runs WHERE phase NOT IN ('abandoned', 'completed') LIMIT 1`,
               )
               .get(),
           );
@@ -285,9 +300,16 @@ export class SqliteRunStore implements RunStore {
 
           this.database
             .prepare(
-              "INSERT INTO runs (run_id, phase, base_url) VALUES (?, ?, ?)",
+              "INSERT INTO runs (run_id, phase, base_url, max_scenarios, scenario_timeout_ms, active_work_budget_ms) VALUES (?, ?, ?, ?, ?, ?)",
             )
-            .run(runId, "inspectingChanges", baseUrl.href);
+            .run(
+              runId,
+              "inspectingChanges",
+              baseUrl.href,
+              planLimits.maxScenarios,
+              planLimits.scenarioTimeoutMs,
+              planLimits.activeWorkBudgetMs,
+            );
           this.database
             .prepare(
               "INSERT INTO operations (operation_id, run_id, kind, status, recovery_policy) VALUES (?, ?, ?, ?, ?)",
@@ -705,6 +727,12 @@ export class SqliteRunStore implements RunStore {
 
   private outcomeSelection(): string {
     return this.hasOutcome ? "outcome" : "NULL AS outcome";
+  }
+
+  private planLimitsSelection(): string {
+    return this.hasPlanLimits
+      ? "max_scenarios, scenario_timeout_ms, active_work_budget_ms"
+      : "20 AS max_scenarios, 30000 AS scenario_timeout_ms, 300000 AS active_work_budget_ms";
   }
 
   private readAttempts(runId: RunId): readonly AttemptRecord[] {

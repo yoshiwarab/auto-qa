@@ -4,6 +4,7 @@ type SqliteRunStoreSchema = {
   readonly hasAbandonReason: boolean;
   readonly hasOutcome: boolean;
   readonly hasJobCompletion: boolean;
+  readonly hasPlanLimits: boolean;
 };
 
 const runColumns = (
@@ -45,7 +46,10 @@ export const prepareSqliteRunStoreSchema = (
         base_url TEXT NOT NULL,
         abandon_reason TEXT,
         outcome TEXT,
-        active_work_ms INTEGER NOT NULL DEFAULT 0
+        active_work_ms INTEGER NOT NULL DEFAULT 0,
+        max_scenarios INTEGER NOT NULL DEFAULT 20,
+        scenario_timeout_ms INTEGER NOT NULL DEFAULT 30000,
+        active_work_budget_ms INTEGER NOT NULL DEFAULT 300000
       ) STRICT;
 
       CREATE TABLE IF NOT EXISTS operations (
@@ -125,6 +129,21 @@ export const prepareSqliteRunStoreSchema = (
         "ALTER TABLE runs ADD COLUMN active_work_ms INTEGER NOT NULL DEFAULT 0",
       );
     }
+    if (!hasRunColumn(database, "max_scenarios")) {
+      database.exec(
+        "ALTER TABLE runs ADD COLUMN max_scenarios INTEGER NOT NULL DEFAULT 20",
+      );
+    }
+    if (!hasRunColumn(database, "scenario_timeout_ms")) {
+      database.exec(
+        "ALTER TABLE runs ADD COLUMN scenario_timeout_ms INTEGER NOT NULL DEFAULT 30000",
+      );
+    }
+    if (!hasRunColumn(database, "active_work_budget_ms")) {
+      database.exec(
+        "ALTER TABLE runs ADD COLUMN active_work_budget_ms INTEGER NOT NULL DEFAULT 300000",
+      );
+    }
     if (!hasTableColumn(database, "jobs", "status")) {
       database.exec(
         "ALTER TABLE jobs ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
@@ -150,5 +169,9 @@ export const prepareSqliteRunStoreSchema = (
       "jobs",
       "status",
     ),
+    hasPlanLimits:
+      hasRunColumn(database, "max_scenarios") &&
+      hasRunColumn(database, "scenario_timeout_ms") &&
+      hasRunColumn(database, "active_work_budget_ms"),
   };
 };

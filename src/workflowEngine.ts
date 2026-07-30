@@ -203,9 +203,20 @@ const validatePendingGeneratePlan = (
     return validation.right;
   });
 
+const canonicalize = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map(canonicalize)
+    : typeof value === "object" && value !== null
+    ? Object.fromEntries(
+        Object.entries(value)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, entry]) => [key, canonicalize(entry)]),
+      )
+    : value;
+
 const submissionHash = (payload: unknown): string =>
   createHash("sha256")
-    .update(JSON.stringify(payload) ?? "undefined")
+    .update(JSON.stringify(canonicalize(payload)) ?? "undefined")
     .digest("hex");
 
 const createGeneratePlanJob = (
@@ -353,6 +364,7 @@ export const makeWorkflowEngine = ({
               );
             }
             const hash = submissionHash(event.payload);
+            const runLimits = persisted.planLimits;
             const priorSubmission =
               yield* runStore.getJobSubmission(runId, event.jobId);
             if (
@@ -372,7 +384,7 @@ export const makeWorkflowEngine = ({
             const usedBeforeAcceptance =
               yield* runStore.getActiveWorkMs(runId);
             const acceptanceBudget =
-              planLimits.activeWorkBudgetMs -
+              runLimits.activeWorkBudgetMs -
               usedBeforeAcceptance;
             if (acceptanceBudget <= 0) {
               return yield* Effect.fail(
@@ -391,7 +403,7 @@ export const makeWorkflowEngine = ({
                     persisted,
                     event,
                     runStore,
-                    planLimits,
+                    runLimits,
                   );
                 const accepted = step(persisted, event);
                 if (accepted._tag === "Left") {
@@ -440,7 +452,7 @@ export const makeWorkflowEngine = ({
               const usedWork =
                 yield* runStore.getActiveWorkMs(runId);
               const remainingWork =
-                planLimits.activeWorkBudgetMs - usedWork;
+                    runLimits.activeWorkBudgetMs - usedWork;
               if (remainingWork <= 0) {
                 return yield* Effect.fail(
                   new RunBudgetExceededError({
@@ -450,6 +462,12 @@ export const makeWorkflowEngine = ({
                 );
               }
               const startedAt = yield* Clock.currentTimeMillis;
+              const scenarioLimitIsBinding =
+                runLimits.scenarioTimeoutMs <= remainingWork;
+              const effectiveTimeout = Math.min(
+                runLimits.scenarioTimeoutMs,
+                remainingWork,
+              );
               const execution =
                 yield* Effect.either(
                   AUTOMATIC_PHASES.executingScenarios.work(
@@ -461,39 +479,36 @@ export const makeWorkflowEngine = ({
                     scriptVersion: 0,
                   },
                   persisted.baseUrl,
-                  Math.min(
-                    planLimits.scenarioTimeoutMs,
-                    remainingWork,
-                  ),
+                  effectiveTimeout,
                   ).pipe(
                     Effect.timeoutFail({
-                      duration: Math.min(
-                        planLimits.scenarioTimeoutMs,
-                        remainingWork,
-                      ),
+                      duration: effectiveTimeout,
                       onTimeout: () =>
-                        new ScenarioRuntimeError({
-                          operation: "execute Scenario",
-                          cause: new Error(
-                            `Scenario timed out after ${Math.min(
-                              planLimits.scenarioTimeoutMs,
-                              remainingWork,
-                            )}ms`,
-                          ),
-                        }),
+                        scenarioLimitIsBinding
+                          ? new ScenarioRuntimeError({
+                              operation: "execute Scenario",
+                              cause: new Error(
+                                `Scenario timed out after ${effectiveTimeout}ms`,
+                              ),
+                            })
+                          : new RunBudgetExceededError({
+                              runId,
+                              message: `Run ${runId} exhausted its active-work budget`,
+                            }),
                     }),
                   ),
                 );
-              const finishedAt = yield* Clock.currentTimeMillis;
               yield* runStore.recordActiveWorkMs(
                 lease,
                 runId,
-                finishedAt - startedAt,
+                execution._tag === "Right"
+                  ? execution.right.activeWorkMs
+                  : (yield* Clock.currentTimeMillis) - startedAt,
               );
               if (execution._tag === "Left") {
                 return yield* Effect.fail(execution.left);
               }
-              const attempt = execution.right;
+              const attempt = execution.right.attempt;
               attempts.push(attempt);
               const nextScenario = frozenScenarios[index + 1];
               if (nextScenario === undefined) {
@@ -532,7 +547,7 @@ export const makeWorkflowEngine = ({
             const usedWork =
               yield* runStore.getActiveWorkMs(runId);
             const remainingWork =
-              planLimits.activeWorkBudgetMs - usedWork;
+              runLimits.activeWorkBudgetMs - usedWork;
             if (remainingWork <= 0) {
               return yield* Effect.fail(
                 new RunBudgetExceededError({
@@ -614,6 +629,7 @@ export const makeWorkflowEngine = ({
               runId,
               event.baseUrl,
               AUTOMATIC_PHASES.inspectingChanges.recoveryPolicy,
+              planLimits,
             );
           }
 
@@ -622,7 +638,7 @@ export const makeWorkflowEngine = ({
             lease,
             runStore,
             changeInspector,
-            planLimits,
+            persisted?.planLimits ?? planLimits,
           );
         }),
     );

@@ -65,6 +65,7 @@ export const makePlaywrightScenarioRuntime = (
     attempt: FrozenScenarioAttempt,
     environment: ScenarioEnvironment,
   ) => {
+    const activeWorkStartedAt = Date.now();
     const launchToken = randomUUID();
     const executablePath = chromium.executablePath();
     let browserAcquired = false;
@@ -194,11 +195,14 @@ export const makePlaywrightScenarioRuntime = (
           });
 
           return {
-            scenarioId: attempt.scenario.id,
-            attemptNumber: attempt.attemptNumber,
-            scriptVersion: attempt.scriptVersion,
-            status: "passed",
-            evidencePath,
+            attempt: {
+              scenarioId: attempt.scenario.id,
+              attemptNumber: attempt.attemptNumber,
+              scriptVersion: attempt.scriptVersion,
+              status: "passed",
+              evidencePath,
+            },
+            activeWorkMs: Date.now() - activeWorkStartedAt,
           } as const;
         }),
       ),

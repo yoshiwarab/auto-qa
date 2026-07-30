@@ -513,7 +513,19 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
             const same = yield* engine.dispatch(runId, {
               type: "submitJob",
               jobId: first.jobId,
-              payload,
+              payload: {
+                scenarios: [
+                  {
+                    script: payload.scenarios[0]!.script,
+                    mutates: payload.scenarios[0]!.mutates,
+                    preconditions:
+                      payload.scenarios[0]!.preconditions,
+                    goal: payload.scenarios[0]!.goal,
+                    id: payload.scenarios[0]!.id,
+                  },
+                ],
+                schemaVersion: payload.schemaVersion,
+              },
             });
             const conflict = yield* Effect.either(
               engine.dispatch(runId, {
@@ -616,6 +628,135 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         left: {
           _tag: "ScenarioRuntimeError",
           operation: "execute Scenario",
+        },
+      });
+    });
+  });
+
+  test("a Run budget binding before the Scenario timeout reports budget exhaustion", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const runId = RunId("run-active-budget-timeout");
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      const exhausted = await Effect.runPromise(
+        Effect.either(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const engine = yield* createWorkflowEngine({
+                databasePath,
+                changeInspector: {
+                  inspect: () => Effect.succeed([]),
+                },
+                scenarioRuntime: {
+                  execute: () => Effect.never,
+                },
+                runReporter: {
+                  writePassingReport: () => Effect.void,
+                },
+                planLimits: {
+                  maxScenarios: 1,
+                  scenarioTimeoutMs: 1_000,
+                  activeWorkBudgetMs: 100,
+                },
+              });
+              const started = yield* engine.dispatch(runId, {
+                type: "start",
+                baseUrl,
+              });
+              return yield* engine.dispatch(runId, {
+                type: "submitJob",
+                jobId: started.pendingJob.id,
+                payload: {
+                  schemaVersion: 1,
+                  scenarios: [
+                    {
+                      id: "never-finishes",
+                      goal: "Exhaust the Run budget",
+                      preconditions: [],
+                      mutates: false,
+                      script: "async () => {}",
+                    },
+                  ],
+                },
+              });
+            }),
+          ),
+        ),
+      );
+
+      expect(exhausted).toMatchObject({
+        _tag: "Left",
+        left: {
+          _tag: "RunBudgetExceededError",
+          runId,
+        },
+      });
+    });
+  });
+
+  test("a restarted Turn enforces the Plan limits persisted with its Run", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const runId = RunId("run-durable-limits");
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      const started = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector: {
+                inspect: () => Effect.succeed([]),
+              },
+              planLimits: {
+                maxScenarios: 1,
+                scenarioTimeoutMs: 50,
+                activeWorkBudgetMs: 500,
+              },
+            });
+            return yield* engine.dispatch(runId, {
+              type: "start",
+              baseUrl,
+            });
+          }),
+        ),
+      );
+      const rejected = await Effect.runPromise(
+        Effect.either(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const engine = yield* createWorkflowEngine({
+                databasePath,
+                changeInspector: {
+                  inspect: () => Effect.succeed([]),
+                },
+                planLimits: {
+                  maxScenarios: 20,
+                  scenarioTimeoutMs: 30_000,
+                  activeWorkBudgetMs: 300_000,
+                },
+              });
+              return yield* engine.dispatch(runId, {
+                type: "submitJob",
+                jobId: started.pendingJob.id,
+                payload: {
+                  schemaVersion: 1,
+                  scenarios: ["first", "second"],
+                },
+              });
+            }),
+          ),
+        ),
+      );
+
+      expect(rejected).toMatchObject({
+        _tag: "Left",
+        left: {
+          _tag: "PlanValidationError",
+          field: "scenarios",
+          message:
+            "generate-plan submission exceeds the Scenario limit of 1",
         },
       });
     });
@@ -868,6 +1009,11 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                 RunId("run-fenced-owner"),
                 baseUrl,
                 "rerun",
+                {
+                  maxScenarios: 20,
+                  scenarioTimeoutMs: 30_000,
+                  activeWorkBudgetMs: 300_000,
+                },
               ),
             );
             yield* store.releaseTurn(currentLease);
