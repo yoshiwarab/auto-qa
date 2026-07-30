@@ -22,7 +22,6 @@ export class PlanValidationError extends Data.TaggedError(
 }> {}
 
 const requiredScenarioFields = [
-  "id",
   "goal",
   "preconditions",
   "mutates",
@@ -41,19 +40,35 @@ export const validateGeneratePlan = (
 ): Either.Either<void, PlanValidationError> => {
   for (const scenario of submission.scenarios) {
     const candidate = asRecord(scenario);
-    const scenarioId =
-      typeof candidate["id"] === "string" &&
-      candidate["id"].length > 0
-        ? candidate["id"]
-        : "<unknown>";
+
+    if (!("id" in candidate)) {
+      return Either.left(
+        new PlanValidationError({
+          scenarioId: "<unknown>",
+          field: "id",
+          message: "Scenario <unknown> is missing required field id",
+        }),
+      );
+    }
+
+    const id = candidate["id"];
+    if (typeof id !== "string" || id.length === 0) {
+      return Either.left(
+        new PlanValidationError({
+          scenarioId: "<unknown>",
+          field: "id",
+          message: "Scenario <unknown> has invalid required field id",
+        }),
+      );
+    }
 
     for (const field of requiredScenarioFields) {
       if (!(field in candidate)) {
         return Either.left(
           new PlanValidationError({
-            scenarioId,
+            scenarioId: id,
             field,
-            message: `Scenario ${scenarioId} is missing required field ${field}`,
+            message: `Scenario ${id} is missing required field ${field}`,
           }),
         );
       }

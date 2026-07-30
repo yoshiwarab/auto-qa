@@ -18,7 +18,8 @@ mkdir -p "build/acceptance/ir" "$generated"
 node "$project_root/node_modules/typescript/bin/tsc" \
   --project "$project_root/tsconfig.build.json"
 
-for stem in durable-generate-plan-handoff \
+for stem in atomic-generate-plan-rejection \
+  durable-generate-plan-handoff \
   cli-durable-generate-plan-handoff \
   cli-one-active-run-per-worktree \
   cli-abandon-active-run \

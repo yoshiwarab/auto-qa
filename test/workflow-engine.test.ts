@@ -236,6 +236,8 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
           _tag: "PlanValidationError",
           scenarioId: "checkout-submits",
           field: "goal",
+          message:
+            "Scenario checkout-submits is missing required field goal",
         },
       });
 
@@ -247,18 +249,110 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
             return {
               status: yield* engine.getStatus(runId),
               pendingJob: yield* engine.getPendingJob(runId),
+              validSubmission: yield* Effect.either(
+                engine.dispatch(runId, {
+                  type: "submitJob",
+                  jobId: result.pendingJob.id,
+                  payload: {
+                    schemaVersion: 1,
+                    scenarios: [
+                      {
+                        id: "dashboard-loads",
+                        goal: "Show the dashboard",
+                        preconditions: [],
+                        mutates: false,
+                        script:
+                          "async ({ page }) => { await page.goto('/dashboard'); }",
+                      },
+                    ],
+                  },
+                }),
+              ),
             };
           }),
         ),
       );
 
-      expect(restarted).toEqual({
+      expect(restarted).toMatchObject({
         status: {
           runId,
           phase: "awaitingAgent",
         },
         pendingJob: result.pendingJob,
+        validSubmission: {
+          _tag: "Left",
+          left: {
+            _tag: "InvalidTransitionError",
+            phase: "awaitingAgent",
+            event: "submitJob",
+            allowedEvents: ["abandon"],
+          },
+        },
       });
+    });
+  });
+
+  test("malformed Scenario identities produce stable plan errors", async () => {
+    const directory = await makeTemporaryDirectory();
+    const examples: readonly {
+      readonly scenario: unknown;
+      readonly message: string;
+    }[] = [
+      {
+        scenario: null,
+        message: "Scenario <unknown> is missing required field id",
+      },
+      {
+        scenario: "not a Scenario",
+        message: "Scenario <unknown> is missing required field id",
+      },
+      {
+        scenario: { id: { length: 1 } },
+        message: "Scenario <unknown> has invalid required field id",
+      },
+      {
+        scenario: { id: "" },
+        message: "Scenario <unknown> has invalid required field id",
+      },
+    ];
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      for (const [index, example] of examples.entries()) {
+        const runId = RunId(`run-malformed-plan-${index}`);
+        const rejected = await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const engine = yield* createNoChangeWorkflowEngine(
+                join(directory, `state-${index}.db`),
+              );
+              const started = yield* engine.dispatch(runId, {
+                type: "start",
+                baseUrl,
+              });
+              return yield* Effect.either(
+                engine.dispatch(runId, {
+                  type: "submitJob",
+                  jobId: started.pendingJob.id,
+                  payload: {
+                    schemaVersion: 1,
+                    scenarios: [example.scenario],
+                  },
+                }),
+              );
+            }),
+          ),
+        );
+
+        expect(rejected).toMatchObject({
+          _tag: "Left",
+          left: {
+            _tag: "PlanValidationError",
+            scenarioId: "<unknown>",
+            field: "id",
+            message: example.message,
+          },
+        });
+      }
     });
   });
 
