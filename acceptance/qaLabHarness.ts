@@ -40,7 +40,7 @@ const hasStopped = (child: ChildProcess): boolean =>
 
 const signalAndAwaitExit = (
   child: ChildProcess,
-  signal: NodeJS.Signals,
+  signal: "SIGTERM" | "SIGKILL",
 ): Effect.Effect<void, QaLabHarnessError> =>
   Effect.async<void, QaLabHarnessError>((resume) => {
     if (hasStopped(child)) {
@@ -84,8 +84,8 @@ const stopChild = (
       onSuccess: () => true,
       onTimeout: () => false,
     }),
-    Effect.flatMap((stopped) => {
-      if (stopped) {
+    Effect.flatMap((exitedGracefully) => {
+      if (exitedGracefully) {
         return Effect.void;
       }
       return signalAndAwaitExit(child, "SIGKILL").pipe(
