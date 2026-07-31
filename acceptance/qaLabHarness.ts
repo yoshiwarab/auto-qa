@@ -38,9 +38,9 @@ export class QaLabHarnessError extends Data.TaggedError(
 const hasStopped = (child: ChildProcess): boolean =>
   child.exitCode !== null || child.signalCode !== null;
 
-const stopChild = (
+const signalAndAwaitExit = (
   child: ChildProcess,
-  shutdownTimeout: Duration.DurationInput,
+  signal: NodeJS.Signals,
 ): Effect.Effect<void, QaLabHarnessError> =>
   Effect.async<void, QaLabHarnessError>((resume) => {
     if (hasStopped(child)) {
@@ -68,11 +68,17 @@ const stopChild = (
     };
     child.once("exit", finish);
     child.once("error", fail);
-    if (!child.kill("SIGTERM") && hasStopped(child)) {
+    if (!child.kill(signal) && hasStopped(child)) {
       finish();
     }
-  }).pipe(
-    Effect.interruptible,
+    return Effect.sync(removeListeners);
+  }).pipe(Effect.interruptible);
+
+const stopChild = (
+  child: ChildProcess,
+  shutdownTimeout: Duration.DurationInput,
+): Effect.Effect<void, QaLabHarnessError> =>
+  signalAndAwaitExit(child, "SIGTERM").pipe(
     Effect.timeoutTo({
       duration: shutdownTimeout,
       onSuccess: () => true,
@@ -82,37 +88,7 @@ const stopChild = (
       if (stopped) {
         return Effect.void;
       }
-      return Effect.async<void, QaLabHarnessError>((resume) => {
-        if (hasStopped(child)) {
-          resume(Effect.void);
-          return;
-        }
-        const removeListeners = (): void => {
-          child.off("exit", finish);
-          child.off("error", fail);
-        };
-        const finish = (): void => {
-          removeListeners();
-          resume(Effect.void);
-        };
-        const fail = (cause: Error): void => {
-          removeListeners();
-          resume(
-            Effect.fail(
-              new QaLabHarnessError({
-                operation: "stop QA Lab",
-                cause,
-              }),
-            ),
-          );
-        };
-        child.once("exit", finish);
-        child.once("error", fail);
-        if (!child.kill("SIGKILL") && hasStopped(child)) {
-          finish();
-        }
-      }).pipe(
-        Effect.interruptible,
+      return signalAndAwaitExit(child, "SIGKILL").pipe(
         Effect.timeoutFail({
           duration: shutdownTimeout,
           onTimeout: () =>

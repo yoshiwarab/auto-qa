@@ -42,16 +42,20 @@ test("QA Lab forces a child to stop after graceful shutdown times out", async ()
   ) => {
     const child = spawn(command, args, options);
     const kill = child.kill.bind(child);
+    let safetyKill: NodeJS.Timeout | undefined;
     child.kill = (signal = "SIGTERM"): boolean => {
       if (typeof signal === "number") {
         return kill(signal);
       }
       harnessSignals.push(signal);
       if (signal === "SIGTERM") {
-        setTimeout(() => {
+        safetyKill = setTimeout(() => {
           kill("SIGKILL");
         }, 500).unref();
         return true;
+      }
+      if (safetyKill !== undefined) {
+        clearTimeout(safetyKill);
       }
       return kill(signal);
     };
