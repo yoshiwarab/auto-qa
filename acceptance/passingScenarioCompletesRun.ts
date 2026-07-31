@@ -8,7 +8,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
 import { chromium } from "playwright";
@@ -73,10 +73,19 @@ const runGit = (
 
 const makeWorld = Effect.gen(function* () {
   const targetApplication = yield* makeQaLab(process.cwd());
+  const parent = join(process.cwd(), "tmp");
+  yield* Effect.promise(() => mkdir(parent, { recursive: true }));
+  const planDirectory = yield* Effect.acquireRelease(
+    Effect.tryPromise(() =>
+      mkdtemp(join(parent, "acceptance-plan-")),
+    ),
+    (directory) =>
+      Effect.tryPromise(() =>
+        rm(directory, { recursive: true }),
+      ).pipe(Effect.orDie),
+  );
   return yield* Effect.acquireRelease(
     Effect.tryPromise(async () => {
-      const parent = join(process.cwd(), "tmp");
-      await mkdir(parent, { recursive: true });
       const worktree = await mkdtemp(
         join(parent, "acceptance-passing-browser-"),
       );
@@ -105,9 +114,6 @@ const makeWorld = Effect.gen(function* () {
         join(worktree, "account.tsx"),
         "export const heading = 'Account';\n",
       );
-      const planDirectory = await mkdtemp(
-        join(parent, "acceptance-plan-"),
-      );
 
       const world = {
         worktree,
@@ -118,14 +124,9 @@ const makeWorld = Effect.gen(function* () {
       return world;
     }),
     (world) =>
-      Effect.tryPromise(async () => {
-        await Promise.all([
-          rm(world.worktree, { recursive: true }),
-          rm(dirname(world.submissionPath), {
-            recursive: true,
-          }),
-        ]);
-      }).pipe(Effect.orDie),
+      Effect.tryPromise(() =>
+        rm(world.worktree, { recursive: true }),
+      ).pipe(Effect.orDie),
   );
 });
 
