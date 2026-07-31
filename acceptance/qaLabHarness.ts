@@ -1,10 +1,31 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import {
+  spawn,
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
 import { join } from "node:path";
-import { Data, Effect, Schedule, type Scope } from "effect";
+import {
+  Data,
+  Effect,
+  Schedule,
+  type Duration,
+  type Scope,
+} from "effect";
 
 export type QaLabProcess = {
   readonly baseUrl: URL;
   readonly isRunning: () => boolean;
+};
+
+export type QaLabProcessLauncher = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+) => ChildProcess;
+
+export type QaLabHarnessOptions = {
+  readonly launchProcess?: QaLabProcessLauncher;
+  readonly shutdownTimeout?: Duration.DurationInput;
 };
 
 export class QaLabHarnessError extends Data.TaggedError(
@@ -19,6 +40,7 @@ const hasStopped = (child: ChildProcess): boolean =>
 
 const stopChild = (
   child: ChildProcess,
+  shutdownTimeout: Duration.DurationInput,
 ): Effect.Effect<void, QaLabHarnessError> =>
   Effect.async<void, QaLabHarnessError>((resume) => {
     if (hasStopped(child)) {
@@ -49,7 +71,61 @@ const stopChild = (
     if (!child.kill("SIGTERM") && hasStopped(child)) {
       finish();
     }
-  });
+  }).pipe(
+    Effect.interruptible,
+    Effect.timeoutTo({
+      duration: shutdownTimeout,
+      onSuccess: () => true,
+      onTimeout: () => false,
+    }),
+    Effect.flatMap((stopped) => {
+      if (stopped) {
+        return Effect.void;
+      }
+      return Effect.async<void, QaLabHarnessError>((resume) => {
+        if (hasStopped(child)) {
+          resume(Effect.void);
+          return;
+        }
+        const removeListeners = (): void => {
+          child.off("exit", finish);
+          child.off("error", fail);
+        };
+        const finish = (): void => {
+          removeListeners();
+          resume(Effect.void);
+        };
+        const fail = (cause: Error): void => {
+          removeListeners();
+          resume(
+            Effect.fail(
+              new QaLabHarnessError({
+                operation: "stop QA Lab",
+                cause,
+              }),
+            ),
+          );
+        };
+        child.once("exit", finish);
+        child.once("error", fail);
+        if (!child.kill("SIGKILL") && hasStopped(child)) {
+          finish();
+        }
+      }).pipe(
+        Effect.interruptible,
+        Effect.timeoutFail({
+          duration: shutdownTimeout,
+          onTimeout: () =>
+            new QaLabHarnessError({
+              operation: "stop QA Lab",
+              cause: new Error(
+                "QA Lab did not stop after forced termination",
+              ),
+            }),
+        }),
+      );
+    }),
+  );
 
 const waitForBoundAddress = (
   child: ChildProcess,
@@ -153,36 +229,47 @@ const waitUntilReachable = (
 
 export const makeQaLab = (
   projectRoot: string,
+  options: QaLabHarnessOptions = {},
 ): Effect.Effect<QaLabProcess, QaLabHarnessError, Scope.Scope> =>
   Effect.gen(function* () {
     const child = yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        spawn(
-          process.execPath,
-          [
-            join(
-              projectRoot,
-              "apps",
-              "qa-lab",
-              "node_modules",
-              "vite",
-              "bin",
-              "vite.js",
-            ),
-            "preview",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "0",
-            "--strictPort",
-          ],
-          {
-            cwd: join(projectRoot, "apps", "qa-lab"),
-            stdio: ["ignore", "pipe", "pipe"],
-          },
-        ),
-      ),
-      (ownedChild) => stopChild(ownedChild).pipe(Effect.orDie),
+      Effect.try({
+        try: () =>
+          (options.launchProcess ?? spawn)(
+            process.execPath,
+            [
+              join(
+                projectRoot,
+                "apps",
+                "qa-lab",
+                "node_modules",
+                "vite",
+                "bin",
+                "vite.js",
+              ),
+              "preview",
+              "--host",
+              "127.0.0.1",
+              "--port",
+              "0",
+              "--strictPort",
+            ],
+            {
+              cwd: join(projectRoot, "apps", "qa-lab"),
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          ),
+        catch: (cause) =>
+          new QaLabHarnessError({
+            operation: "start QA Lab",
+            cause,
+          }),
+      }),
+      (ownedChild) =>
+        stopChild(
+          ownedChild,
+          options.shutdownTimeout ?? "2 seconds",
+        ).pipe(Effect.orDie),
     );
     const baseUrl = yield* waitForBoundAddress(child);
     yield* waitUntilReachable(baseUrl);
