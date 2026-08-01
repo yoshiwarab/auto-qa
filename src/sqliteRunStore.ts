@@ -28,10 +28,10 @@ import type {
   RunStatus,
 } from "./workflowProtocol.js";
 import {
-  makeNodeProcessIdentity,
   type ProcessIdentity,
   type ProcessIdentityError,
 } from "./processIdentity.js";
+import { makeNodeProcessIdentity } from "./nodeProcessIdentity.js";
 import {
   decodeProcessIncarnation,
   encodeProcessIncarnation,
@@ -196,8 +196,12 @@ export class SqliteRunStore implements RunStore {
             new RunBusyError({ owningRunId: "unknown" }),
           );
         }
-        const persistedIncarnation = decodeProcessIncarnation(
-          current.process_started_at,
+        const persistedIncarnation = yield* this.tryStore(
+          "decode Turn owner",
+          () =>
+            decodeProcessIncarnation(
+              current.process_started_at,
+            ),
         );
         const recordedOwnerIsLive =
           yield* this.processIdentity.isRunning(

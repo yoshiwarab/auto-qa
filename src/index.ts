@@ -57,8 +57,8 @@ export {
   type ProcessIdentity,
   type ProcessIncarnation,
   type ProcessIdentityRecord,
-  readCurrentProcessIdentity,
 } from "./processIdentity.js";
+export { readCurrentProcessIdentity } from "./nodeProcessIdentity.js";
 
 export { GitWorktreeRequiredError } from "./gitWorktree.js";
 

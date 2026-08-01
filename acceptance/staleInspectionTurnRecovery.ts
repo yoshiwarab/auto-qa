@@ -169,13 +169,14 @@ const handlers: readonly StepHandler<World>[] = [
   },
   {
     pattern:
-      /^the first process owns the Turn with ownership token <([A-Za-z0-9_]+)>$/,
+      /^the first process owns the Turn with ownership token ([A-Za-z0-9-]+)$/,
     run: (world, example, captures) =>
       Effect.sync(() => {
-        world.firstOwnershipToken = exampleValue(
-          example,
-          captures[0],
-        );
+        const ownershipToken = captures[0];
+        if (ownershipToken === undefined) {
+          throw new Error("Missing first Turn ownership token");
+        }
+        world.firstOwnershipToken = ownershipToken;
         world.recordedOwnerState =
           example["stale_owner_state"] ?? "live";
       }),
@@ -244,13 +245,14 @@ const handlers: readonly StepHandler<World>[] = [
   },
   {
     pattern:
-      /^the second process uses ownership token <([A-Za-z0-9_]+)>$/,
-    run: (world, example, captures) =>
+      /^the second process uses ownership token ([A-Za-z0-9-]+)$/,
+    run: (world, _example, captures) =>
       Effect.sync(() => {
-        world.secondOwnershipToken = exampleValue(
-          example,
-          captures[0],
-        );
+        const ownershipToken = captures[0];
+        if (ownershipToken === undefined) {
+          throw new Error("Missing second Turn ownership token");
+        }
+        world.secondOwnershipToken = ownershipToken;
       }),
   },
   {

@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 import {
   makeNodeProcessIdentity,
   readCurrentProcessIdentity,
-} from "../src/processIdentity.js";
+} from "../src/nodeProcessIdentity.js";
 
 test("Process Identity distinguishes the live process from PID reuse", async () => {
   const result = await Effect.runPromise(

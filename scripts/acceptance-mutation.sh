@@ -40,7 +40,8 @@ for stem in passing-scenario-completes-run \
   cli-one-active-run-per-worktree \
   cli-abandon-active-run \
   cli-requires-git-worktree \
-  workflow-engine-fenced-turn; do
+  workflow-engine-fenced-turn \
+  stale-inspection-turn-recovery; do
   feature="features/$stem.feature"
   ir="build/acceptance/ir/$stem.json"
   bb --config "$aps_root/bb.edn" gherkin-parser "$feature" "$ir"

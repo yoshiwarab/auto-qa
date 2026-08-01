@@ -1,6 +1,6 @@
 # mutation-stamp: sha256=df864ba6b6fd50bc408af3342e662d791ede430764c395e1237435833ec6f157
 # acceptance-mutation-manifest-begin
-# {"version":1,"tested_at":"2026-07-31T00:32:57.177582426Z","feature_name":"CLI abandons an active Run","feature_path":"features/cli-abandon-active-run.feature","background_hash":"74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b","implementation_hash":"sha256:fed9a1ebd5757ee3dcc74d7faa717781684ecb3c1229cd1d2e334ec808234fd0","scenarios":[{"index":0,"name":"CLI abandons an active Run 001","scenario_hash":"6b86c99c77ef0dc9c2831e247ad2150d87ca36de8140e5290448d167fc8ae4af","mutation_count":3,"result":{"Total":3,"Killed":3,"Survived":0,"Errors":0},"tested_at":"2026-07-28T18:59:42.863163006Z"}]}
+# {"version":1,"tested_at":"2026-08-01T01:04:53.525315805Z","feature_name":"CLI abandons an active Run","feature_path":"features/cli-abandon-active-run.feature","background_hash":"74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b","implementation_hash":"sha256:fed9a1ebd5757ee3dcc74d7faa717781684ecb3c1229cd1d2e334ec808234fd0","scenarios":[{"index":0,"name":"CLI abandons an active Run 001","scenario_hash":"6b86c99c77ef0dc9c2831e247ad2150d87ca36de8140e5290448d167fc8ae4af","mutation_count":3,"result":{"Total":3,"Killed":3,"Survived":0,"Errors":0},"tested_at":"2026-07-28T18:59:42.863163006Z"}]}
 # acceptance-mutation-manifest-end
 
 # Scenario: CLI abandons an active Run 001

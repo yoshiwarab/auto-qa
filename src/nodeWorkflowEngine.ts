@@ -19,11 +19,11 @@ import type {
   TurnOwner,
   WorkflowStoreError,
 } from "./runStore.js";
-import type { ProcessIdentity } from "./processIdentity.js";
 import {
-  readCurrentProcessIdentity,
+  type ProcessIdentity,
   type ProcessIdentityError,
 } from "./processIdentity.js";
+import { readCurrentProcessIdentity } from "./nodeProcessIdentity.js";
 
 const makeTurnOwner = (): Effect.Effect<
   TurnOwner,
