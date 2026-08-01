@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { Data, Effect } from "effect";
 
 export type ProcessIdentityRecord = {
@@ -19,52 +19,45 @@ export interface ProcessIdentity {
   ) => Effect.Effect<boolean, ProcessIdentityError>;
 }
 
+const linuxProcessStartTicks = (stat: string): string => {
+  const commandEnd = stat.lastIndexOf(")");
+  const fieldsAfterCommand = stat.slice(commandEnd + 2).split(" ");
+  const startTicks = fieldsAfterCommand[19];
+  if (commandEnd < 0 || startTicks === undefined) {
+    throw new Error("Malformed Linux process stat record");
+  }
+  return startTicks;
+};
+
 const readProcessStartedAt = (
   processId: number,
 ): Effect.Effect<string | null, ProcessIdentityError> =>
-  Effect.async<string | null, ProcessIdentityError>((resume) => {
-    const child = execFile(
-      "ps",
-      ["-o", "lstart=", "-p", String(processId)],
-      (cause, stdout) => {
-        if (cause !== null) {
-          if (
-            "code" in cause &&
-            (cause.code === 1 || cause.code === "1")
-          ) {
-            resume(Effect.succeed(null));
-            return;
-          }
-          resume(
-            Effect.fail(
-              new ProcessIdentityError({ processId, cause }),
-            ),
-          );
-          return;
-        }
-
-        const observedStartedAt = Date.parse(stdout.trim());
-        if (Number.isNaN(observedStartedAt)) {
-          resume(
-            Effect.fail(
-              new ProcessIdentityError({
-                processId,
-                cause: new Error(
-                  `Could not read process start time: ${stdout.trim()}`,
-                ),
-              }),
-            ),
-          );
-          return;
-        }
-        resume(
-          Effect.succeed(
-            new Date(observedStartedAt).toISOString(),
-          ),
+  Effect.tryPromise({
+    try: async () => {
+      if (process.platform !== "linux") {
+        throw new Error(
+          `Process identity is unsupported on ${process.platform}`,
         );
-      },
-    );
-    return Effect.sync(() => child.kill());
+      }
+      try {
+        const [bootId, stat] = await Promise.all([
+          readFile("/proc/sys/kernel/random/boot_id", "utf8"),
+          readFile(`/proc/${processId}/stat`, "utf8"),
+        ]);
+        return `${bootId.trim()}:${linuxProcessStartTicks(stat.trim())}`;
+      } catch (cause) {
+        if (
+          cause instanceof Error &&
+          "code" in cause &&
+          cause.code === "ENOENT"
+        ) {
+          return null;
+        }
+        throw cause;
+      }
+    },
+    catch: (cause) =>
+      new ProcessIdentityError({ processId, cause }),
   });
 
 export const readCurrentProcessIdentity = (): Effect.Effect<

@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { Effect, Fiber } from "effect";
 import { expect } from "vitest";
@@ -6,10 +7,14 @@ import {
   RunId,
   createWorkflowEngine,
   makeDeterministicScenarioRuntime,
+  type ChangeInspector,
   type DispatchResult,
   type WorkflowError,
 } from "../src/index.js";
-import type { TurnLease } from "../src/runStore.js";
+import type {
+  TurnLease,
+  TurnOwner,
+} from "../src/runStore.js";
 import { openSqliteRunStore } from "../src/sqliteRunStore.js";
 import {
   exampleValue,
@@ -22,7 +27,7 @@ type World = {
   readonly databasePath: string;
   readonly baseUrl: URL;
   readonly inspectionStarted: Promise<void>;
-  readonly signaledProcesses: number[];
+  readonly unrelatedProcess: ChildProcess;
   markInspectionStarted: () => void;
   firstOwnershipToken?: string;
   firstLease?: TurnLease;
@@ -42,6 +47,25 @@ const firstProcessId = 101;
 const firstProcessStartedAt = "2026-07-31T20:00:00.000Z";
 const secondProcessId = 202;
 const secondProcessStartedAt = "2026-07-31T20:01:00.000Z";
+const runId = RunId("inspection-recovery");
+
+const isRunning = (child: ChildProcess): boolean =>
+  child.exitCode === null && child.signalCode === null;
+
+const stopProcess = (child: ChildProcess): Effect.Effect<void> =>
+  Effect.async<void>((resume) => {
+    if (!isRunning(child)) {
+      resume(Effect.void);
+      return;
+    }
+    const finished = (): void => {
+      child.off("exit", finished);
+      resume(Effect.void);
+    };
+    child.once("exit", finished);
+    child.kill("SIGKILL");
+    return Effect.sync(() => child.off("exit", finished));
+  }).pipe(Effect.interruptible);
 
 const makeWorld = Effect.gen(function* () {
   const { baseUrl, directory } =
@@ -52,11 +76,21 @@ const makeWorld = Effect.gen(function* () {
   const inspectionStarted = new Promise<void>((resolve) => {
     markInspectionStarted = resolve;
   });
+  const unrelatedProcess = yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      spawn(
+        process.execPath,
+        ["-e", "setInterval(() => undefined, 1_000)"],
+        { stdio: "ignore" },
+      ),
+    ),
+    (child) => stopProcess(child).pipe(Effect.orDie),
+  );
   const world: World = {
     databasePath: join(directory, "state.db"),
     baseUrl,
     inspectionStarted,
-    signaledProcesses: [],
+    unrelatedProcess,
     markInspectionStarted,
   };
 
@@ -80,6 +114,39 @@ const processIdentity = (world: World) => ({
 const reporter = {
   writePassingReport: () => Effect.void,
 };
+
+const firstTurnOwner = (world: World): TurnOwner => ({
+  processId: firstProcessId,
+  processStartedAt: firstProcessStartedAt,
+  ownershipToken: world.firstOwnershipToken ?? "missing-token",
+});
+
+const secondTurnOwner = (world: World): TurnOwner => ({
+  processId: secondProcessId,
+  processStartedAt: secondProcessStartedAt,
+  ownershipToken: world.secondOwnershipToken ?? "missing-token",
+});
+
+const createMutableEngine = (
+  world: World,
+  changeInspector: ChangeInspector,
+  turnOwner: TurnOwner,
+) =>
+  createWorkflowEngine({
+    databasePath: world.databasePath,
+    changeInspector,
+    processIdentity: processIdentity(world),
+    turnOwnerFactory: () => turnOwner,
+    scenarioRuntime: makeDeterministicScenarioRuntime(),
+    runReporter: reporter,
+  });
+
+const createReadOnlyEngine = (world: World) =>
+  createWorkflowEngine({
+    databasePath: world.databasePath,
+    changeInspector: { inspect: () => Effect.succeed([]) },
+    readOnly: true,
+  });
 
 const handlers: readonly StepHandler<World>[] = [
   {
@@ -114,18 +181,13 @@ const handlers: readonly StepHandler<World>[] = [
             { processIdentity: processIdentity(world) },
           );
           const lease = yield* store.acquireTurn(
-            RunId("inspection-recovery"),
-            {
-              processId: firstProcessId,
-              processStartedAt: firstProcessStartedAt,
-              ownershipToken:
-                world.firstOwnershipToken ?? "missing-token",
-            },
+            runId,
+            firstTurnOwner(world),
           );
           world.firstLease = lease;
           yield* store.startInspection(
             lease,
-            RunId("inspection-recovery"),
+            runId,
             world.baseUrl,
             "rerun",
             {
@@ -188,24 +250,16 @@ const handlers: readonly StepHandler<World>[] = [
         const result = yield* Effect.either(
           Effect.scoped(
             Effect.gen(function* () {
-              const engine = yield* createWorkflowEngine({
-                databasePath: world.databasePath,
-                changeInspector: {
+              const engine = yield* createMutableEngine(
+                world,
+                {
                   inspect: () =>
                     Effect.succeed(world.reportedChanges ?? []),
                 },
-                processIdentity: processIdentity(world),
-                turnOwnerFactory: () => ({
-                  processId: secondProcessId,
-                  processStartedAt: secondProcessStartedAt,
-                  ownershipToken:
-                    world.secondOwnershipToken ?? "missing-token",
-                }),
-                scenarioRuntime: makeDeterministicScenarioRuntime(),
-                runReporter: reporter,
-              });
+                secondTurnOwner(world),
+              );
               return yield* engine.dispatch(
-                RunId("inspection-recovery"),
+                runId,
                 { type: "start", baseUrl: world.baseUrl },
               );
             }),
@@ -256,14 +310,8 @@ const handlers: readonly StepHandler<World>[] = [
     run: (world) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const engine = yield* createWorkflowEngine({
-            databasePath: world.databasePath,
-            changeInspector: { inspect: () => Effect.succeed([]) },
-            readOnly: true,
-          });
-          const pendingJob = yield* engine.getPendingJob(
-            RunId("inspection-recovery"),
-          );
+          const engine = yield* createReadOnlyEngine(world);
+          const pendingJob = yield* engine.getPendingJob(runId);
           expect(pendingJob).toEqual(
             world.secondDispatch?.phase === "awaitingAgent"
               ? world.secondDispatch.pendingJob
@@ -278,14 +326,8 @@ const handlers: readonly StepHandler<World>[] = [
     run: (world, example, captures) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const engine = yield* createWorkflowEngine({
-            databasePath: world.databasePath,
-            changeInspector: { inspect: () => Effect.succeed([]) },
-            readOnly: true,
-          });
-          expect(
-            yield* engine.getStatus(RunId("inspection-recovery")),
-          ).toMatchObject({
+          const engine = yield* createReadOnlyEngine(world);
+          expect(yield* engine.getStatus(runId)).toMatchObject({
             runId: "inspection-recovery",
             phase: exampleValue(example, captures[0]),
           });
@@ -297,7 +339,7 @@ const handlers: readonly StepHandler<World>[] = [
       /^no process outside the recorded Turn ownership is signaled$/,
     run: (world) =>
       Effect.sync(() => {
-        expect(world.signaledProcesses).toEqual([]);
+        expect(isRunning(world.unrelatedProcess)).toBe(true);
       }),
   },
   {
@@ -308,9 +350,9 @@ const handlers: readonly StepHandler<World>[] = [
         world.firstDispatch = Effect.runFork(
           Effect.scoped(
             Effect.gen(function* () {
-              const engine = yield* createWorkflowEngine({
-                databasePath: world.databasePath,
-                changeInspector: {
+              const engine = yield* createMutableEngine(
+                world,
+                {
                   inspect: () =>
                     Effect.async((resume) => {
                       world.releaseInspection = () =>
@@ -318,18 +360,10 @@ const handlers: readonly StepHandler<World>[] = [
                       world.markInspectionStarted();
                     }),
                 },
-                processIdentity: processIdentity(world),
-                turnOwnerFactory: () => ({
-                  processId: firstProcessId,
-                  processStartedAt: firstProcessStartedAt,
-                  ownershipToken:
-                    world.firstOwnershipToken ?? "missing-token",
-                }),
-                scenarioRuntime: makeDeterministicScenarioRuntime(),
-                runReporter: reporter,
-              });
+                firstTurnOwner(world),
+              );
               return yield* engine.dispatch(
-                RunId("inspection-recovery"),
+                runId,
                 { type: "start", baseUrl: world.baseUrl },
               );
             }),
@@ -364,14 +398,8 @@ const handlers: readonly StepHandler<World>[] = [
     run: (world) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const engine = yield* createWorkflowEngine({
-            databasePath: world.databasePath,
-            changeInspector: { inspect: () => Effect.succeed([]) },
-            readOnly: true,
-          });
-          expect(
-            yield* engine.getPendingJob(RunId("inspection-recovery")),
-          ).toBeNull();
+          const engine = yield* createReadOnlyEngine(world);
+          expect(yield* engine.getPendingJob(runId)).toBeNull();
         }),
       ),
   },
@@ -381,7 +409,7 @@ const handlers: readonly StepHandler<World>[] = [
     run: (world) =>
       Effect.sync(() => {
         expect(world.releaseInspection).toBeDefined();
-        expect(world.signaledProcesses).toEqual([]);
+        expect(isRunning(world.unrelatedProcess)).toBe(true);
       }),
   },
 ];
