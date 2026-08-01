@@ -106,6 +106,8 @@ const makeWorld = Effect.gen(function* () {
 });
 
 const processIdentity = (world: World) => ({
+  isRunning: () =>
+    Effect.succeed(world.recordedOwnerIsCurrent ?? false),
   isCurrent: () =>
     Effect.succeed(world.recordedOwnerIsCurrent ?? false),
 });

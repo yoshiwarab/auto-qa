@@ -102,8 +102,25 @@ const encodeProcessIncarnation = (
   incarnation: ProcessIncarnation,
 ): string => JSON.stringify(incarnation);
 
-const decodeProcessIncarnation = (value: string): ProcessIncarnation => {
-  const decoded = JSON.parse(value) as unknown;
+type PersistedProcessIncarnation =
+  | {
+      readonly format: "current";
+      readonly incarnation: ProcessIncarnation;
+    }
+  | { readonly format: "legacy" };
+
+const decodeProcessIncarnation = (
+  value: string,
+): PersistedProcessIncarnation => {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(value) as unknown;
+  } catch {
+    if (!Number.isNaN(Date.parse(value))) {
+      return { format: "legacy" };
+    }
+    throw new Error("Malformed persisted process incarnation");
+  }
   if (
     typeof decoded !== "object" ||
     decoded === null ||
@@ -115,8 +132,11 @@ const decodeProcessIncarnation = (value: string): ProcessIncarnation => {
     throw new Error("Malformed persisted process incarnation");
   }
   return {
-    bootId: decoded.bootId,
-    startTicks: decoded.startTicks,
+    format: "current",
+    incarnation: {
+      bootId: decoded.bootId,
+      startTicks: decoded.startTicks,
+    },
   };
 };
 
@@ -215,12 +235,19 @@ export class SqliteRunStore implements RunStore {
             new RunBusyError({ owningRunId: "unknown" }),
           );
         }
-        const currentOwnerIsLive = yield* this.processIdentity.isCurrent({
-          processId: current.process_id,
-          processIncarnation: decodeProcessIncarnation(
-            current.process_started_at,
-          ),
-        });
+        const persistedIncarnation = decodeProcessIncarnation(
+          current.process_started_at,
+        );
+        const currentOwnerIsLive =
+          persistedIncarnation.format === "legacy"
+            ? yield* this.processIdentity.isRunning(
+                current.process_id,
+              )
+            : yield* this.processIdentity.isCurrent({
+                processId: current.process_id,
+                processIncarnation:
+                  persistedIncarnation.incarnation,
+              });
         if (currentOwnerIsLive) {
           return yield* Effect.fail(
             new RunBusyError({ owningRunId: current.run_id }),

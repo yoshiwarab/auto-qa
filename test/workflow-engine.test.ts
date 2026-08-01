@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Effect, Fiber } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import {
@@ -71,6 +72,18 @@ const createNoChangeWorkflowEngine = (
       writePassingReport: () => Effect.void,
     },
   });
+
+const replaceTurnIncarnationWithLegacyTimestamp = (
+  databasePath: string,
+): void => {
+  const database = new DatabaseSync(databasePath);
+  database
+    .prepare(
+      "UPDATE turn_lock SET process_started_at = ? WHERE lock_id = 1",
+    )
+    .run("2026-07-31T20:00:00.000Z");
+  database.close();
+};
 
 afterEach(async () => {
   await Promise.all(
@@ -1025,6 +1038,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
           }),
         ),
       );
+      replaceTurnIncarnationWithLegacyTimestamp(databasePath);
 
       const recovered = await Effect.runPromise(
         Effect.scoped(
@@ -1041,6 +1055,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   ]),
               },
               processIdentity: {
+                isRunning: () => Effect.succeed(false),
                 isCurrent: () => Effect.succeed(false),
               },
               turnOwnerFactory: () => ({
@@ -1213,6 +1228,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
 
       try {
         await inspectionStarted;
+        replaceTurnIncarnationWithLegacyTimestamp(databasePath);
 
         const concurrent = await Effect.runPromise(
           Effect.either(
