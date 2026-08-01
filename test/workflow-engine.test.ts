@@ -1056,7 +1056,6 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               },
               processIdentity: {
                 isRunning: () => Effect.succeed(false),
-                isCurrent: () => Effect.succeed(false),
               },
               turnOwnerFactory: () => ({
                 processId: 202,

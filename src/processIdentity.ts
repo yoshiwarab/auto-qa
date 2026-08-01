@@ -20,10 +20,9 @@ export class ProcessIdentityError extends Data.TaggedError(
 
 export interface ProcessIdentity {
   readonly isRunning: (
-    processId: number,
-  ) => Effect.Effect<boolean, ProcessIdentityError>;
-  readonly isCurrent: (
-    recorded: ProcessIdentityRecord,
+    recorded:
+      | ProcessIdentityRecord
+      | { readonly processId: number },
   ) => Effect.Effect<boolean, ProcessIdentityError>;
 }
 
@@ -90,17 +89,14 @@ export const readCurrentProcessIdentity = (): Effect.Effect<
   );
 
 export const makeNodeProcessIdentity = (): ProcessIdentity => ({
-  isRunning: (processId) =>
-    Effect.map(
-      readProcessIncarnation(processId),
-      (observed) => observed !== null,
-    ),
-  isCurrent: (recorded) =>
+  isRunning: (recorded) =>
     Effect.map(
       readProcessIncarnation(recorded.processId),
       (observed) =>
-        observed?.bootId === recorded.processIncarnation.bootId &&
-        observed.startTicks ===
-          recorded.processIncarnation.startTicks,
+        observed !== null &&
+        (!("processIncarnation" in recorded) ||
+          (observed.bootId === recorded.processIncarnation.bootId &&
+            observed.startTicks ===
+              recorded.processIncarnation.startTicks)),
     ),
 });

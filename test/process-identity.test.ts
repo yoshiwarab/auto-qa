@@ -11,8 +11,8 @@ test("Process Identity distinguishes the live process from PID reuse", async () 
       const recorded = yield* readCurrentProcessIdentity();
       const processIdentity = makeNodeProcessIdentity();
       return {
-        matching: yield* processIdentity.isCurrent(recorded),
-        reused: yield* processIdentity.isCurrent({
+        matching: yield* processIdentity.isRunning(recorded),
+        reused: yield* processIdentity.isRunning({
           ...recorded,
           processIncarnation: {
             ...recorded.processIncarnation,
@@ -21,6 +21,9 @@ test("Process Identity distinguishes the live process from PID reuse", async () 
             }`,
           },
         }),
+        missing: yield* processIdentity.isRunning({
+          processId: Number.MAX_SAFE_INTEGER,
+        }),
       };
     }),
   );
@@ -28,5 +31,6 @@ test("Process Identity distinguishes the live process from PID reuse", async () 
   expect(result).toEqual({
     matching: true,
     reused: false,
+    missing: false,
   });
 });
