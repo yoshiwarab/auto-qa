@@ -1005,7 +1005,10 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
             const store = yield* openSqliteRunStore(databasePath);
             const staleLease = yield* store.acquireTurn(runId, {
               processId: 101,
-              processStartedAt: "2026-07-31T20:00:00.000Z",
+              processIncarnation: {
+                bootId: "boot-001",
+                startTicks: "100",
+              },
               ownershipToken: "stale-turn-001",
             });
             yield* store.startInspection(
@@ -1042,7 +1045,10 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               },
               turnOwnerFactory: () => ({
                 processId: 202,
-                processStartedAt: "2026-07-31T20:01:00.000Z",
+                processIncarnation: {
+                  bootId: "boot-001",
+                  startTicks: "200",
+                },
                 ownershipToken: "replacement-turn-001",
               }),
             });
@@ -1323,7 +1329,10 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               RunId("run-fenced-owner"),
               {
                 processId: 101,
-                processStartedAt: "2026-07-23T20:00:00.000Z",
+                processIncarnation: {
+                  bootId: "boot-001",
+                  startTicks: "100",
+                },
                 ownershipToken: "lease-001",
               },
             );
@@ -1332,7 +1341,10 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               RunId("run-fenced-owner"),
               {
                 processId: 202,
-                processStartedAt: "2026-07-23T20:01:00.000Z",
+                processIncarnation: {
+                  bootId: "boot-001",
+                  startTicks: "200",
+                },
                 ownershipToken: "lease-002",
               },
             );
@@ -1519,7 +1531,10 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                 ownershipTokens.push(ownershipToken);
                 return {
                   processId: 101,
-                  processStartedAt: "2026-07-23T20:00:00.000Z",
+                  processIncarnation: {
+                    bootId: "boot-001",
+                    startTicks: "100",
+                  },
                   ownershipToken,
                 };
               },

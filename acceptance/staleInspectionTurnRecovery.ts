@@ -32,6 +32,7 @@ type World = {
   firstOwnershipToken?: string;
   firstLease?: TurnLease;
   secondOwnershipToken?: string;
+  recordedOwnerState?: string;
   recordedOwnerIsCurrent?: boolean;
   reportedChanges?: readonly {
     readonly kind: "modified";
@@ -44,9 +45,7 @@ type World = {
 };
 
 const firstProcessId = 101;
-const firstProcessStartedAt = "2026-07-31T20:00:00.000Z";
 const secondProcessId = 202;
-const secondProcessStartedAt = "2026-07-31T20:01:00.000Z";
 const runId = RunId("inspection-recovery");
 
 const isRunning = (child: ChildProcess): boolean =>
@@ -116,14 +115,23 @@ const reporter = {
 };
 
 const firstTurnOwner = (world: World): TurnOwner => ({
-  processId: firstProcessId,
-  processStartedAt: firstProcessStartedAt,
+  processId:
+    world.recordedOwnerState === "pid-reused"
+      ? world.unrelatedProcess.pid ?? firstProcessId
+      : firstProcessId,
+  processIncarnation: {
+    bootId: "recorded-boot",
+    startTicks: "100",
+  },
   ownershipToken: world.firstOwnershipToken ?? "missing-token",
 });
 
 const secondTurnOwner = (world: World): TurnOwner => ({
   processId: secondProcessId,
-  processStartedAt: secondProcessStartedAt,
+  processIncarnation: {
+    bootId: "replacement-boot",
+    startTicks: "200",
+  },
   ownershipToken: world.secondOwnershipToken ?? "missing-token",
 });
 
@@ -168,6 +176,8 @@ const handlers: readonly StepHandler<World>[] = [
           example,
           captures[0],
         );
+        world.recordedOwnerState =
+          example["stale_owner_state"] ?? "live";
       }),
   },
   {
@@ -227,6 +237,7 @@ const handlers: readonly StepHandler<World>[] = [
     run: (world, example, captures) =>
       Effect.sync(() => {
         const state = exampleValue(example, captures[0]);
+        world.recordedOwnerState = state;
         world.recordedOwnerIsCurrent =
           state !== "missing" && state !== "pid-reused";
       }),

@@ -1,9 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { Data, Effect } from "effect";
 
+export type ProcessIncarnation = {
+  readonly bootId: string;
+  readonly startTicks: string;
+};
+
 export type ProcessIdentityRecord = {
   readonly processId: number;
-  readonly processStartedAt: string;
+  readonly processIncarnation: ProcessIncarnation;
 };
 
 export class ProcessIdentityError extends Data.TaggedError(
@@ -29,9 +34,9 @@ const linuxProcessStartTicks = (stat: string): string => {
   return startTicks;
 };
 
-const readProcessStartedAt = (
+const readProcessIncarnation = (
   processId: number,
-): Effect.Effect<string | null, ProcessIdentityError> =>
+): Effect.Effect<ProcessIncarnation | null, ProcessIdentityError> =>
   Effect.tryPromise({
     try: async () => {
       if (process.platform !== "linux") {
@@ -44,7 +49,10 @@ const readProcessStartedAt = (
           readFile("/proc/sys/kernel/random/boot_id", "utf8"),
           readFile(`/proc/${processId}/stat`, "utf8"),
         ]);
-        return `${bootId.trim()}:${linuxProcessStartTicks(stat.trim())}`;
+        return {
+          bootId: bootId.trim(),
+          startTicks: linuxProcessStartTicks(stat.trim()),
+        };
       } catch (cause) {
         if (
           cause instanceof Error &&
@@ -64,8 +72,8 @@ export const readCurrentProcessIdentity = (): Effect.Effect<
   ProcessIdentityRecord,
   ProcessIdentityError
 > =>
-  Effect.flatMap(readProcessStartedAt(process.pid), (processStartedAt) =>
-    processStartedAt === null
+  Effect.flatMap(readProcessIncarnation(process.pid), (incarnation) =>
+    incarnation === null
       ? Effect.fail(
           new ProcessIdentityError({
             processId: process.pid,
@@ -74,15 +82,17 @@ export const readCurrentProcessIdentity = (): Effect.Effect<
         )
       : Effect.succeed({
           processId: process.pid,
-          processStartedAt,
+          processIncarnation: incarnation,
         }),
   );
 
 export const makeNodeProcessIdentity = (): ProcessIdentity => ({
   isCurrent: (recorded) =>
     Effect.map(
-      readProcessStartedAt(recorded.processId),
-      (observedStartedAt) =>
-        observedStartedAt === recorded.processStartedAt,
+      readProcessIncarnation(recorded.processId),
+      (observed) =>
+        observed?.bootId === recorded.processIncarnation.bootId &&
+        observed.startTicks ===
+          recorded.processIncarnation.startTicks,
     ),
 });

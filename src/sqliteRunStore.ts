@@ -31,6 +31,7 @@ import {
   makeNodeProcessIdentity,
   type ProcessIdentity,
   type ProcessIdentityError,
+  type ProcessIncarnation,
 } from "./processIdentity.js";
 
 type JobRow = {
@@ -96,6 +97,28 @@ const asAttemptRows = (value: unknown): readonly AttemptRow[] =>
 
 const asScenarioRows = (value: unknown): readonly ScenarioRow[] =>
   value as readonly ScenarioRow[];
+
+const encodeProcessIncarnation = (
+  incarnation: ProcessIncarnation,
+): string => JSON.stringify(incarnation);
+
+const decodeProcessIncarnation = (value: string): ProcessIncarnation => {
+  const decoded = JSON.parse(value) as unknown;
+  if (
+    typeof decoded !== "object" ||
+    decoded === null ||
+    !("bootId" in decoded) ||
+    typeof decoded.bootId !== "string" ||
+    !("startTicks" in decoded) ||
+    typeof decoded.startTicks !== "string"
+  ) {
+    throw new Error("Malformed persisted process incarnation");
+  }
+  return {
+    bootId: decoded.bootId,
+    startTicks: decoded.startTicks,
+  };
+};
 
 const decodePhase = (phase: string): RunPhase => {
   if (
@@ -171,7 +194,7 @@ export class SqliteRunStore implements RunStore {
           .run(
             runId,
             owner.processId,
-            owner.processStartedAt,
+            encodeProcessIncarnation(owner.processIncarnation),
             owner.ownershipToken,
           ),
       );
@@ -194,7 +217,9 @@ export class SqliteRunStore implements RunStore {
         }
         const currentOwnerIsLive = yield* this.processIdentity.isCurrent({
           processId: current.process_id,
-          processStartedAt: current.process_started_at,
+          processIncarnation: decodeProcessIncarnation(
+            current.process_started_at,
+          ),
         });
         if (currentOwnerIsLive) {
           return yield* Effect.fail(
@@ -218,7 +243,7 @@ export class SqliteRunStore implements RunStore {
               .run(
                 runId,
                 owner.processId,
-                owner.processStartedAt,
+                encodeProcessIncarnation(owner.processIncarnation),
                 owner.ownershipToken,
               );
             return true;

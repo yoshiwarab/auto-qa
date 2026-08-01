@@ -55,6 +55,7 @@ export { createWorkflowEngine } from "./nodeWorkflowEngine.js";
 export {
   ProcessIdentityError,
   type ProcessIdentity,
+  type ProcessIncarnation,
   type ProcessIdentityRecord,
   readCurrentProcessIdentity,
 } from "./processIdentity.js";
