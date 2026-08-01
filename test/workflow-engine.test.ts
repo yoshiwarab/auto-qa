@@ -993,6 +993,108 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
     });
   });
 
+  test("a new process takes over a stale inspection Turn and reruns it", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const runId = RunId("inspection-recovery");
+
+    await withHarnessBaseUrl(async (baseUrl) => {
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const store = yield* openSqliteRunStore(databasePath);
+            const staleLease = yield* store.acquireTurn(runId, {
+              processId: 101,
+              processStartedAt: "2026-07-31T20:00:00.000Z",
+              ownershipToken: "stale-turn-001",
+            });
+            yield* store.startInspection(
+              staleLease,
+              runId,
+              baseUrl,
+              "rerun",
+              {
+                maxScenarios: 20,
+                scenarioTimeoutMs: 30_000,
+                activeWorkBudgetMs: 300_000,
+              },
+            );
+          }),
+        ),
+      );
+
+      const recovered = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector: {
+                inspect: () =>
+                  Effect.succeed([
+                    {
+                      kind: "modified",
+                      path: "src/account.tsx",
+                    },
+                  ]),
+              },
+              processIdentity: {
+                isCurrent: () => Effect.succeed(false),
+              },
+              turnOwnerFactory: () => ({
+                processId: 202,
+                processStartedAt: "2026-07-31T20:01:00.000Z",
+                ownershipToken: "replacement-turn-001",
+              }),
+            });
+            const dispatch = yield* engine.dispatch(runId, {
+              type: "start",
+              baseUrl,
+            });
+            return {
+              dispatch,
+              pendingJob: yield* engine.getPendingJob(runId),
+              status: yield* engine.getStatus(runId),
+            };
+          }),
+        ),
+      );
+
+      expect(recovered).toMatchObject({
+        dispatch: {
+          phase: "awaitingAgent",
+          pendingJob: {
+            schemaVersion: 1,
+            type: "generate-plan",
+            payload: {
+              changes: [
+                {
+                  kind: "modified",
+                  path: "src/account.tsx",
+                },
+              ],
+            },
+          },
+        },
+        pendingJob: {
+          schemaVersion: 1,
+          type: "generate-plan",
+          payload: {
+            changes: [
+              {
+                kind: "modified",
+                path: "src/account.tsx",
+              },
+            ],
+          },
+        },
+        status: {
+          runId: "inspection-recovery",
+          phase: "awaitingAgent",
+        },
+      });
+    });
+  });
+
   test("a restarted engine reruns interrupted deterministic inspection", async () => {
     const directory = await makeTemporaryDirectory();
     const databasePath = join(directory, "state.db");

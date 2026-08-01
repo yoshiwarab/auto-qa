@@ -27,6 +27,11 @@ import type {
   GeneratePlanJob,
   RunStatus,
 } from "./workflowProtocol.js";
+import {
+  makeNodeProcessIdentity,
+  type ProcessIdentity,
+  type ProcessIdentityError,
+} from "./processIdentity.js";
 
 type JobRow = {
   readonly job_json: string;
@@ -67,6 +72,9 @@ type ScenarioRow = {
 
 type TurnLockRow = {
   readonly run_id: string;
+  readonly process_id: number;
+  readonly process_started_at: string;
+  readonly ownership_token: string;
 };
 
 const asJobRow = (value: unknown): JobRow | undefined =>
@@ -131,6 +139,7 @@ export class SqliteRunStore implements RunStore {
   constructor(
     private readonly database: DatabaseSync,
     initialize = true,
+    private readonly processIdentity = makeNodeProcessIdentity(),
   ) {
     const schema = prepareSqliteRunStoreSchema(
       database,
@@ -151,7 +160,7 @@ export class SqliteRunStore implements RunStore {
     owner: TurnOwner,
   ): Effect.Effect<
     TurnLease,
-    RunBusyError | WorkflowStoreError
+    ProcessIdentityError | RunBusyError | WorkflowStoreError
   > {
     return Effect.gen(this, function* () {
       const result = yield* this.tryStore("acquire Turn", () =>
@@ -173,16 +182,53 @@ export class SqliteRunStore implements RunStore {
             asTurnLockRow(
               this.database
                 .prepare(
-                  "SELECT run_id FROM turn_lock WHERE lock_id = 1",
+                  "SELECT run_id, process_id, process_started_at, ownership_token FROM turn_lock WHERE lock_id = 1",
                 )
                 .get(),
             ),
         );
-        return yield* Effect.fail(
-          new RunBusyError({
-            owningRunId: current?.run_id ?? "unknown",
-          }),
+        if (current === undefined) {
+          return yield* Effect.fail(
+            new RunBusyError({ owningRunId: "unknown" }),
+          );
+        }
+        const currentOwnerIsLive = yield* this.processIdentity.isCurrent({
+          processId: current.process_id,
+          processStartedAt: current.process_started_at,
+        });
+        if (currentOwnerIsLive) {
+          return yield* Effect.fail(
+            new RunBusyError({ owningRunId: current.run_id }),
+          );
+        }
+
+        const takeover = yield* this.transaction(
+          "take over stale Turn",
+          () => {
+            const deleted = this.database
+              .prepare(
+                "DELETE FROM turn_lock WHERE lock_id = 1 AND ownership_token = ?",
+              )
+              .run(current.ownership_token);
+            if (Number(deleted.changes) === 0) return false;
+            this.database
+              .prepare(
+                "INSERT INTO turn_lock (lock_id, run_id, process_id, process_started_at, ownership_token) VALUES (1, ?, ?, ?, ?)",
+              )
+              .run(
+                runId,
+                owner.processId,
+                owner.processStartedAt,
+                owner.ownershipToken,
+              );
+            return true;
+          },
         );
+        if (!takeover) {
+          return yield* Effect.fail(
+            new RunBusyError({ owningRunId: current.run_id }),
+          );
+        }
       }
 
       return {
@@ -800,7 +846,10 @@ export class SqliteRunStore implements RunStore {
 
 export const openSqliteRunStore = (
   databasePath: string,
-  options: { readonly readOnly?: boolean } = {},
+  options: {
+    readonly readOnly?: boolean;
+    readonly processIdentity?: ProcessIdentity;
+  } = {},
 ): Effect.Effect<RunStore, WorkflowStoreError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.try({
@@ -810,6 +859,7 @@ export const openSqliteRunStore = (
             readOnly: options.readOnly ?? false,
           }),
           !(options.readOnly ?? false),
+          options.processIdentity,
         ),
       catch: (cause) =>
         new WorkflowStoreError({

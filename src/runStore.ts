@@ -13,6 +13,10 @@ import type {
   GeneratePlanJob,
   RunStatus,
 } from "./workflowProtocol.js";
+import type {
+  ProcessIdentityError,
+  ProcessIdentityRecord,
+} from "./processIdentity.js";
 
 export type JobSubmissionState = {
   readonly status: "pending" | "accepted" | "completed";
@@ -49,9 +53,7 @@ export class TurnOwnershipLostError extends Data.TaggedError(
 
 export type RecoveryPolicy = "rerun" | "record-interrupted";
 
-export type TurnOwner = {
-  readonly processId: number;
-  readonly processStartedAt: string;
+export type TurnOwner = ProcessIdentityRecord & {
   readonly ownershipToken: string;
 };
 
@@ -70,7 +72,7 @@ export interface RunStore {
     owner: TurnOwner,
   ) => Effect.Effect<
     TurnLease,
-    RunBusyError | WorkflowStoreError
+    ProcessIdentityError | RunBusyError | WorkflowStoreError
   >;
   readonly releaseTurn: (
     lease: TurnLease,

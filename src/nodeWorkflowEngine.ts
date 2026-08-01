@@ -19,19 +19,26 @@ import type {
   TurnOwner,
   WorkflowStoreError,
 } from "./runStore.js";
+import type { ProcessIdentity } from "./processIdentity.js";
+import {
+  readCurrentProcessIdentity,
+  type ProcessIdentityError,
+} from "./processIdentity.js";
 
-const makeTurnOwner = (): TurnOwner => ({
-  processId: process.pid,
-  processStartedAt: new Date(
-    Date.now() - process.uptime() * 1_000,
-  ).toISOString(),
-  ownershipToken: randomUUID(),
-});
+const makeTurnOwner = (): Effect.Effect<
+  TurnOwner,
+  ProcessIdentityError
+> =>
+  Effect.map(readCurrentProcessIdentity(), (identity) => ({
+    ...identity,
+    ownershipToken: randomUUID(),
+  }));
 
 export const createWorkflowEngine = ({
   databasePath,
   changeInspector,
-  turnOwnerFactory = makeTurnOwner,
+  turnOwnerFactory,
+  processIdentity,
   readOnly = false,
   scenarioRuntime,
   runReporter,
@@ -40,6 +47,7 @@ export const createWorkflowEngine = ({
   readonly databasePath: string;
   readonly changeInspector: ChangeInspector;
   readonly turnOwnerFactory?: () => TurnOwner;
+  readonly processIdentity?: ProcessIdentity;
   readonly readOnly?: boolean;
   readonly scenarioRuntime?: ScenarioRuntime;
   readonly runReporter?: RunReporter;
@@ -51,7 +59,12 @@ export const createWorkflowEngine = ({
 > => {
   const stateDirectory = dirname(databasePath);
   return Effect.map(
-    openSqliteRunStore(databasePath, { readOnly }),
+    openSqliteRunStore(databasePath, {
+      readOnly,
+      ...(processIdentity === undefined
+        ? {}
+        : { processIdentity }),
+    }),
     (runStore) =>
       makeWorkflowEngine({
         runStore,
@@ -62,7 +75,10 @@ export const createWorkflowEngine = ({
         runReporter:
           runReporter ?? makeFileRunReporter(stateDirectory),
         planLimits,
-        makeTurnOwner: turnOwnerFactory,
+        makeTurnOwner:
+          turnOwnerFactory === undefined
+            ? makeTurnOwner
+            : () => Effect.sync(turnOwnerFactory),
       }),
   );
 };

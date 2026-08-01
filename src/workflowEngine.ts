@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Clock, Data, Effect } from "effect";
+import type { ProcessIdentityError } from "./processIdentity.js";
 import {
   PlanValidationError,
   type PlanLimits,
@@ -98,6 +99,7 @@ export type WorkflowError =
   | InvalidTransitionError
   | JobSubmissionConflictError
   | PlanValidationError
+  | ProcessIdentityError
   | RunReportError
   | RunBusyError
   | RunBudgetExceededError
@@ -357,7 +359,7 @@ const withTurn = <Result, Error>(
   use: (lease: TurnLease) => Effect.Effect<Result, Error>,
 ): Effect.Effect<
   Result,
-  Error | RunBusyError | WorkflowStoreError
+  Error | ProcessIdentityError | RunBusyError | WorkflowStoreError
 > =>
   Effect.uninterruptibleMask((restore) =>
     Effect.flatMap(
@@ -392,13 +394,17 @@ export const makeWorkflowEngine = ({
   readonly scenarioRuntime: ScenarioRuntime;
   readonly runReporter: RunReporter;
   readonly planLimits: PlanLimits;
-  readonly makeTurnOwner: () => TurnOwner;
+  readonly makeTurnOwner: () => Effect.Effect<
+    TurnOwner,
+    ProcessIdentityError
+  >;
 }): WorkflowEngine => {
   const dispatch = (
     runId: RunId,
     event: ExternalEvent,
   ): Effect.Effect<DispatchResult | RunStatus, WorkflowError> =>
-    withTurn(runId, makeTurnOwner(), runStore, (lease) =>
+    Effect.flatMap(makeTurnOwner(), (turnOwner) =>
+      withTurn(runId, turnOwner, runStore, (lease) =>
         Effect.gen(function* () {
           const persisted = yield* runStore.loadRun(runId);
           if (event.type === "submitJob") {
@@ -625,6 +631,7 @@ export const makeWorkflowEngine = ({
             persisted?.planLimits ?? planLimits,
           );
         }),
+      ),
     );
 
   return {

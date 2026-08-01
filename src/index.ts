@@ -52,6 +52,13 @@ export {
 
 export { createWorkflowEngine } from "./nodeWorkflowEngine.js";
 
+export {
+  ProcessIdentityError,
+  type ProcessIdentity,
+  type ProcessIdentityRecord,
+  readCurrentProcessIdentity,
+} from "./processIdentity.js";
+
 export { GitWorktreeRequiredError } from "./gitWorktree.js";
 
 export {

@@ -41,6 +41,11 @@ export const generateDurablePlanEntrypoint = async (
           module: "workflowFencedTurn",
           name: "workflowFencedTurn",
         }
+      : stem === "stale-inspection-turn-recovery"
+      ? {
+          module: "staleInspectionTurnRecovery",
+          name: "staleInspectionTurnRecovery",
+        }
       : stem === "cli-requires-git-worktree"
       ? {
           module: "cliRequiresGitWorktree",
