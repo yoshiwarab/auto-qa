@@ -37,6 +37,10 @@ export type ScenarioBatchCompletedEvent = {
   readonly type: "scenarioBatchCompleted";
 };
 
+export type ScenarioExecutionInterruptedEvent = {
+  readonly type: "scenarioExecutionInterrupted";
+};
+
 export type ReportCompletedEvent = {
   readonly type: "reportCompleted";
 };
@@ -44,6 +48,7 @@ export type ReportCompletedEvent = {
 export type MachineEvent =
   | ExternalEvent
   | ChangesInspectedEvent
+  | ScenarioExecutionInterruptedEvent
   | ScenarioBatchCompletedEvent
   | ReportCompletedEvent;
 export type MachineEventType = MachineEvent["type"];
@@ -84,6 +89,7 @@ export const TRANSITIONS = {
     abandon: "abandoned",
   },
   executingScenarios: {
+    scenarioExecutionInterrupted: "awaitingAgent",
     scenarioBatchCompleted: "reporting",
   },
   reporting: {

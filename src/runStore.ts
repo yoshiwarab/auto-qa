@@ -11,6 +11,8 @@ import type {
   AttemptRecord,
   CompletedDispatchResult,
   GeneratePlanJob,
+  ClassifyFindingsJob,
+  Job,
   RunStatus,
 } from "./workflowProtocol.js";
 import type {
@@ -59,6 +61,7 @@ export type TurnOwner = ProcessIdentityRecord & {
 
 export type TurnLease = {
   readonly ownershipToken: string;
+  readonly recoveredStaleOwner: boolean;
 };
 
 export type RunRecord = RunStatus & {
@@ -118,6 +121,13 @@ export interface RunStore {
     void,
     TurnOwnershipLostError | WorkflowStoreError
   >;
+  readonly recordInterruptedScenario: (
+    lease: TurnLease,
+    runId: RunId,
+  ) => Effect.Effect<
+    ClassifyFindingsJob | null,
+    TurnOwnershipLostError | WorkflowStoreError
+  >;
   readonly completePassingReport: (
     lease: TurnLease,
     runId: RunId,
@@ -146,7 +156,7 @@ export interface RunStore {
   >;
   readonly getPendingJob: (
     runId: RunId,
-  ) => Effect.Effect<GeneratePlanJob | null, WorkflowStoreError>;
+  ) => Effect.Effect<Job | null, WorkflowStoreError>;
   readonly getStatus: (
     runId: RunId,
   ) => Effect.Effect<

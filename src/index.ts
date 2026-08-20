@@ -4,6 +4,7 @@ export {
   ChangeInspectionError,
   type Change,
   type ChangeInspector,
+  type ClassifyFindingsDispatchResult,
   type CompletedDispatchResult,
   type DispatchResult,
   type GeneratePlanJob,
@@ -13,6 +14,13 @@ export {
   type WorkflowEngine,
   type WorkflowError,
 } from "./workflowEngine.js";
+
+export type {
+  ClassifyFindingsJob,
+  Finding,
+  FindingCause,
+  Job,
+} from "./workflowProtocol.js";
 
 export {
   ScenarioRuntimeError,
@@ -47,6 +55,7 @@ export {
   type ReportCompletedEvent,
   type RunPhase,
   type ScenarioBatchCompletedEvent,
+  type ScenarioExecutionInterruptedEvent,
   type SubmitJobEvent,
 } from "./workflowMachine.js";
 

@@ -508,6 +508,26 @@ describe("CLI durable generate-plan handoff", () => {
         run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id),
         job_json TEXT NOT NULL
       ) STRICT;
+      CREATE TABLE scenarios (
+        run_id TEXT NOT NULL REFERENCES runs(run_id),
+        scenario_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        goal TEXT NOT NULL,
+        preconditions_json TEXT NOT NULL,
+        mutates INTEGER NOT NULL,
+        PRIMARY KEY (run_id, scenario_id)
+      ) STRICT;
+      CREATE TABLE attempts (
+        run_id TEXT NOT NULL,
+        scenario_id TEXT NOT NULL,
+        attempt_number INTEGER NOT NULL,
+        script_version INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        evidence_path TEXT NOT NULL,
+        PRIMARY KEY (run_id, scenario_id, attempt_number),
+        FOREIGN KEY (run_id, scenario_id)
+          REFERENCES scenarios(run_id, scenario_id)
+      ) STRICT;
       CREATE TABLE turn_lock (
         lock_id INTEGER PRIMARY KEY CHECK (lock_id = 1),
         run_id TEXT NOT NULL,

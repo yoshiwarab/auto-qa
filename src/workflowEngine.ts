@@ -40,14 +40,17 @@ import type {
   AttemptRecord,
   AwaitingAgentDispatchResult,
   Change,
+  ClassifyFindingsDispatchResult,
   CompletedDispatchResult,
   DispatchResult,
   GeneratePlanJob,
+  Job,
   RunStatus,
 } from "./workflowProtocol.js";
 
 export type {
   AwaitingAgentDispatchResult,
+  ClassifyFindingsDispatchResult,
   CompletedDispatchResult,
   Change,
   DispatchResult,
@@ -121,11 +124,14 @@ export interface WorkflowEngine {
     (
       runId: RunId,
       event: SubmitJobEvent,
-    ): Effect.Effect<CompletedDispatchResult, WorkflowError>;
+    ): Effect.Effect<
+      CompletedDispatchResult | ClassifyFindingsDispatchResult,
+      WorkflowError
+    >;
   };
   readonly getPendingJob: (
     runId: RunId,
-  ) => Effect.Effect<GeneratePlanJob | null, WorkflowError>;
+  ) => Effect.Effect<Job | null, WorkflowError>;
   readonly getStatus: (
     runId: RunId,
   ) => Effect.Effect<RunStatus, WorkflowError>;
@@ -352,6 +358,37 @@ const runChangeInspection = (
     };
   });
 
+const recoverInterruptedScenario = (
+  run: RunRecord,
+  lease: TurnLease,
+  runStore: RunStore,
+): Effect.Effect<ClassifyFindingsDispatchResult, WorkflowError> =>
+  Effect.gen(function* () {
+    const transition = step(run, {
+      type: "scenarioExecutionInterrupted",
+    });
+    if (transition._tag === "Left") {
+      return yield* Effect.fail(transition.left);
+    }
+    const pendingJob = yield* runStore.recordInterruptedScenario(
+      lease,
+      run.runId,
+    );
+    if (pendingJob === null) {
+      return yield* Effect.fail(
+        new InvalidTransitionError({
+          phase: run.phase,
+          event: "scenarioExecutionInterrupted",
+          allowedEvents: allowedEvents(run.phase),
+        }),
+      );
+    }
+    return {
+      phase: "awaitingAgent",
+      pendingJob,
+    };
+  });
+
 const withTurn = <Result, Error>(
   runId: RunId,
   turnOwner: TurnOwner,
@@ -430,6 +467,35 @@ export const makeWorkflowEngine = ({
                   message: `Job ${event.jobId} was already completed with a different submission`,
                 }),
               );
+            }
+            if (priorSubmission?.status === "accepted") {
+              if (priorSubmission.submissionHash !== hash) {
+                return yield* Effect.fail(
+                  new JobSubmissionConflictError({
+                    jobId: event.jobId,
+                    message: `Job ${event.jobId} was already accepted with a different submission`,
+                  }),
+                );
+              }
+              if (
+                persisted.phase === "executingScenarios" &&
+                lease.recoveredStaleOwner
+              ) {
+                return yield* recoverInterruptedScenario(
+                  persisted,
+                  lease,
+                  runStore,
+                );
+              }
+              if (persisted.phase === "awaitingAgent") {
+                const pendingJob = yield* runStore.getPendingJob(runId);
+                if (pendingJob?.type === "classify-findings") {
+                  return {
+                    phase: "awaitingAgent",
+                    pendingJob,
+                  };
+                }
+              }
             }
             const { accepted, frozenScenarios } =
               yield* runWithinActiveWorkBudget(

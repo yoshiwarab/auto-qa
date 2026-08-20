@@ -8,7 +8,7 @@ import {
   type Change,
   type ChangeInspector,
   type AwaitingAgentDispatchResult,
-  type GeneratePlanJob,
+  type Job,
   type RunStatus,
   type WorkflowEngine,
 } from "../src/index.js";
@@ -24,7 +24,7 @@ type World = {
   readonly baseUrl: URL;
   changes: readonly Change[];
   dispatchResult?: AwaitingAgentDispatchResult;
-  restartedJob?: GeneratePlanJob | null;
+  restartedJob?: Job | null;
   restartedStatus?: RunStatus;
 };
 

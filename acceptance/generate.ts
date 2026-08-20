@@ -46,6 +46,11 @@ export const generateDurablePlanEntrypoint = async (
           module: "staleInspectionTurnRecovery",
           name: "staleInspectionTurnRecovery",
         }
+      : stem === "interrupted-scenario-execution-recovery"
+      ? {
+          module: "interruptedScenarioExecutionRecovery",
+          name: "interruptedScenarioExecutionRecovery",
+        }
       : stem === "cli-requires-git-worktree"
       ? {
           module: "cliRequiresGitWorktree",

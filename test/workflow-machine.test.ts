@@ -66,6 +66,9 @@ const eventFixtures = {
   scenarioBatchCompleted: (): MachineEvent => ({
     type: "scenarioBatchCompleted",
   }),
+  scenarioExecutionInterrupted: (): MachineEvent => ({
+    type: "scenarioExecutionInterrupted",
+  }),
   reportCompleted: (): MachineEvent => ({
     type: "reportCompleted",
   }),

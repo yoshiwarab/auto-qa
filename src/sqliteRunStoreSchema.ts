@@ -31,6 +31,150 @@ const hasTableColumn = (
       .all() as unknown as readonly { readonly name: string }[]
   ).some((column) => column.name === name);
 
+const tableColumnIsNotNull = (
+  database: DatabaseSync,
+  table: string,
+  name: string,
+): boolean =>
+  (
+    database
+      .prepare(`PRAGMA table_info(${table})`)
+      .all() as unknown as readonly {
+      readonly name: string;
+      readonly notnull: number;
+    }[]
+  ).some(
+    (column) => column.name === name && column.notnull === 1,
+  );
+
+const runMigration = (
+  database: DatabaseSync,
+  statements: string,
+): void => {
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database.exec(statements);
+    database.exec("COMMIT");
+  } catch (cause) {
+    database.exec("ROLLBACK");
+    throw cause;
+  }
+};
+
+const jobsRequireMultipleRowsMigration = (
+  database: DatabaseSync,
+): boolean =>
+  database
+    .prepare(
+      `SELECT 1
+       FROM pragma_index_list('jobs') AS job_indexes
+       WHERE job_indexes."unique" = 1
+         AND (
+           SELECT group_concat(index_columns.name, ',')
+           FROM pragma_index_info(job_indexes.name) AS index_columns
+         ) = 'run_id'
+       LIMIT 1`,
+    )
+    .get() !== undefined;
+
+const allowMultipleJobsPerRun = (database: DatabaseSync): void => {
+  if (!jobsRequireMultipleRowsMigration(database)) return;
+  runMigration(database, `
+    ALTER TABLE jobs RENAME TO jobs_one_per_run;
+    CREATE TABLE jobs (
+      job_id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES runs(run_id),
+      job_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      submission_hash TEXT,
+      result_json TEXT
+    ) STRICT;
+    INSERT INTO jobs (
+      job_id,
+      run_id,
+      job_json,
+      status,
+      submission_hash,
+      result_json
+    )
+    SELECT
+      job_id,
+      run_id,
+      job_json,
+      status,
+      submission_hash,
+      result_json
+    FROM jobs_one_per_run;
+    DROP TABLE jobs_one_per_run;
+  `);
+};
+
+const allowAttemptWithoutEvidence = (
+  database: DatabaseSync,
+): void => {
+  if (
+    !tableColumnIsNotNull(
+      database,
+      "attempts",
+      "evidence_path",
+    )
+  ) {
+    return;
+  }
+  runMigration(
+    database,
+    `
+      ALTER TABLE attempts RENAME TO attempts_with_required_evidence;
+      CREATE TABLE attempts (
+        run_id TEXT NOT NULL,
+        scenario_id TEXT NOT NULL,
+        attempt_number INTEGER NOT NULL,
+        script_version INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        evidence_path TEXT,
+        PRIMARY KEY (run_id, scenario_id, attempt_number),
+        FOREIGN KEY (run_id, scenario_id)
+          REFERENCES scenarios(run_id, scenario_id)
+      ) STRICT;
+      INSERT INTO attempts (
+        run_id,
+        scenario_id,
+        attempt_number,
+        script_version,
+        status,
+        evidence_path
+      )
+      SELECT
+        run_id,
+        scenario_id,
+        attempt_number,
+        script_version,
+        status,
+        evidence_path
+      FROM attempts_with_required_evidence;
+      DROP TABLE attempts_with_required_evidence;
+    `,
+  );
+};
+
+const createFindingsTable = (database: DatabaseSync): void => {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS findings (
+      finding_id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      scenario_id TEXT NOT NULL,
+      attempt_number INTEGER NOT NULL,
+      script_version INTEGER NOT NULL,
+      mechanical_status TEXT NOT NULL,
+      cause TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      evidence_path TEXT,
+      FOREIGN KEY (run_id, scenario_id, attempt_number)
+        REFERENCES attempts(run_id, scenario_id, attempt_number)
+    ) STRICT;
+  `);
+};
+
 export const prepareSqliteRunStoreSchema = (
   database: DatabaseSync,
   initialize: boolean,
@@ -57,12 +201,15 @@ export const prepareSqliteRunStoreSchema = (
         run_id TEXT NOT NULL REFERENCES runs(run_id),
         kind TEXT NOT NULL,
         status TEXT NOT NULL,
-        recovery_policy TEXT NOT NULL
+        recovery_policy TEXT NOT NULL,
+        scenario_id TEXT,
+        attempt_number INTEGER,
+        script_version INTEGER
       ) STRICT;
 
       CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY,
-        run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id),
+        run_id TEXT NOT NULL REFERENCES runs(run_id),
         job_json TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending',
         submission_hash TEXT,
@@ -110,15 +257,31 @@ export const prepareSqliteRunStoreSchema = (
         attempt_number INTEGER NOT NULL,
         script_version INTEGER NOT NULL,
         status TEXT NOT NULL,
-        evidence_path TEXT NOT NULL,
+        evidence_path TEXT,
         PRIMARY KEY (run_id, scenario_id, attempt_number),
         FOREIGN KEY (run_id, scenario_id)
           REFERENCES scenarios(run_id, scenario_id)
       ) STRICT;
+
     `);
     if (!hasRunColumn(database, "abandon_reason")) {
       database.exec(
         "ALTER TABLE runs ADD COLUMN abandon_reason TEXT",
+      );
+    }
+    if (!hasTableColumn(database, "operations", "scenario_id")) {
+      database.exec(
+        "ALTER TABLE operations ADD COLUMN scenario_id TEXT",
+      );
+    }
+    if (!hasTableColumn(database, "operations", "attempt_number")) {
+      database.exec(
+        "ALTER TABLE operations ADD COLUMN attempt_number INTEGER",
+      );
+    }
+    if (!hasTableColumn(database, "operations", "script_version")) {
+      database.exec(
+        "ALTER TABLE operations ADD COLUMN script_version INTEGER",
       );
     }
     if (!hasRunColumn(database, "outcome")) {
@@ -159,6 +322,9 @@ export const prepareSqliteRunStoreSchema = (
         "ALTER TABLE jobs ADD COLUMN result_json TEXT",
       );
     }
+    allowMultipleJobsPerRun(database);
+    allowAttemptWithoutEvidence(database);
+    createFindingsTable(database);
   }
 
   return {

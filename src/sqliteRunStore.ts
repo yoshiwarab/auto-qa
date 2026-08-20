@@ -23,8 +23,10 @@ import type { PlanLimits } from "./planValidation.js";
 import { prepareSqliteRunStoreSchema } from "./sqliteRunStoreSchema.js";
 import type {
   AttemptRecord,
+  ClassifyFindingsJob,
   CompletedDispatchResult,
   GeneratePlanJob,
+  Job,
   RunStatus,
 } from "./workflowProtocol.js";
 import {
@@ -62,8 +64,15 @@ type AttemptRow = {
   readonly scenario_id: string;
   readonly attempt_number: number;
   readonly script_version: number;
-  readonly status: "passed" | "failed";
-  readonly evidence_path: string;
+  readonly status: "passed" | "failed" | "interrupted";
+  readonly evidence_path: string | null;
+};
+
+type InterruptedScenarioRow = {
+  readonly operation_id: string;
+  readonly scenario_id: string;
+  readonly attempt_number: number;
+  readonly script_version: number;
 };
 
 type ScenarioRow = {
@@ -100,6 +109,31 @@ const asAttemptRows = (value: unknown): readonly AttemptRow[] =>
 
 const asScenarioRows = (value: unknown): readonly ScenarioRow[] =>
   value as readonly ScenarioRow[];
+
+const asInterruptedScenarioRow = (
+  value: unknown,
+): InterruptedScenarioRow | undefined => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("operation_id" in value) ||
+    typeof value.operation_id !== "string" ||
+    !("scenario_id" in value) ||
+    typeof value.scenario_id !== "string" ||
+    !("attempt_number" in value) ||
+    typeof value.attempt_number !== "number" ||
+    !("script_version" in value) ||
+    typeof value.script_version !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    operation_id: value.operation_id,
+    scenario_id: value.scenario_id,
+    attempt_number: value.attempt_number,
+    script_version: value.script_version,
+  };
+};
 
 const decodePhase = (phase: string): RunPhase => {
   if (
@@ -167,6 +201,7 @@ export class SqliteRunStore implements RunStore {
     ProcessIdentityError | RunBusyError | WorkflowStoreError
   > {
     return Effect.gen(this, function* () {
+      let recoveredStaleOwner = false;
       const result = yield* this.tryStore("acquire Turn", () =>
         this.database
           .prepare(
@@ -246,10 +281,12 @@ export class SqliteRunStore implements RunStore {
             new RunBusyError({ owningRunId: current.run_id }),
           );
         }
+        recoveredStaleOwner = true;
       }
 
       return {
         ownershipToken: owner.ownershipToken,
+        recoveredStaleOwner,
       };
     });
   }
@@ -487,7 +524,7 @@ export class SqliteRunStore implements RunStore {
             .run("executingScenarios", runId);
           const first = scenarios[0];
           if (first !== undefined) {
-            this.startScenarioOperation(runId, first.id);
+            this.startScenarioOperation(runId, first.id, 1, 0);
           }
         },
       );
@@ -553,9 +590,125 @@ export class SqliteRunStore implements RunStore {
             )
             .run(`${runId}:write-report:1`, runId);
         } else {
-          this.startScenarioOperation(runId, nextScenarioId);
+          this.startScenarioOperation(runId, nextScenarioId, 1, 0);
         }
       },
+    );
+  }
+
+  recordInterruptedScenario(
+    lease: TurnLease,
+    runId: RunId,
+  ): Effect.Effect<
+    ClassifyFindingsJob | null,
+    TurnOwnershipLostError | WorkflowStoreError
+  > {
+    return Effect.flatMap(
+      this.transaction("record interrupted Scenario Attempt", () => {
+        if (!this.ownsTurn(lease)) {
+          return { type: "ownership-lost" } as const;
+        }
+        const interrupted = asInterruptedScenarioRow(
+          this.database
+            .prepare(
+              `SELECT operation_id, scenario_id, attempt_number, script_version
+               FROM operations
+               WHERE run_id = ?
+                 AND kind = 'execute-scenario'
+                 AND status = 'started'
+                 AND recovery_policy = 'record-interrupted'
+                 AND scenario_id IS NOT NULL
+                 AND attempt_number IS NOT NULL
+                 AND script_version IS NOT NULL
+               LIMIT 1`,
+            )
+            .get(runId),
+        );
+        if (interrupted === undefined) {
+          return { type: "none" } as const;
+        }
+
+        const attemptNumber = interrupted.attempt_number;
+        const findingId = `${runId}:${interrupted.scenario_id}:${attemptNumber}`;
+        const summary =
+          "Scenario execution was interrupted before a result was durably recorded";
+        const finding = {
+          id: findingId,
+          scenarioId: interrupted.scenario_id,
+          attemptNumber,
+          scriptVersion: interrupted.script_version,
+          mechanicalStatus: "interrupted",
+          cause: "interrupted",
+          summary,
+          evidenceBundle: null,
+        } as const;
+        const job: ClassifyFindingsJob = {
+          schemaVersion: 1,
+          id: `${runId}:classify-findings:1`,
+          type: "classify-findings",
+          runId,
+          payload: { findings: [finding] },
+        };
+
+        this.database
+          .prepare(
+            "UPDATE operations SET status = 'interrupted' WHERE operation_id = ?",
+          )
+          .run(interrupted.operation_id);
+        this.database
+          .prepare(
+            "INSERT INTO attempts (run_id, scenario_id, attempt_number, script_version, status, evidence_path) VALUES (?, ?, ?, ?, 'interrupted', NULL)",
+          )
+          .run(
+            runId,
+            interrupted.scenario_id,
+            attemptNumber,
+            interrupted.script_version,
+          );
+        this.database
+          .prepare(
+            "INSERT INTO findings (finding_id, run_id, scenario_id, attempt_number, script_version, mechanical_status, cause, summary, evidence_path) VALUES (?, ?, ?, ?, ?, 'interrupted', 'interrupted', ?, NULL)",
+          )
+          .run(
+            findingId,
+            runId,
+            interrupted.scenario_id,
+            attemptNumber,
+            interrupted.script_version,
+            summary,
+          );
+        this.database
+          .prepare(
+            "INSERT INTO jobs (job_id, run_id, job_json) VALUES (?, ?, ?)",
+          )
+          .run(job.id, runId, JSON.stringify(job));
+        this.database
+          .prepare(
+            "INSERT INTO events (run_id, type, payload_json) VALUES (?, 'scenarioExecutionInterrupted', ?)",
+          )
+          .run(
+            runId,
+            JSON.stringify({
+              scenarioId: interrupted.scenario_id,
+              attemptNumber,
+              scriptVersion: interrupted.script_version,
+            }),
+          );
+        this.database
+          .prepare("UPDATE runs SET phase = 'awaitingAgent' WHERE run_id = ?")
+          .run(runId);
+        return { type: "recorded", job } as const;
+      }),
+      (result) =>
+        result.type === "ownership-lost"
+          ? Effect.fail(
+              new TurnOwnershipLostError({
+                ownershipToken: lease.ownershipToken,
+              }),
+            )
+          : Effect.succeed(
+              result.type === "recorded" ? result.job : null,
+            ),
     );
   }
 
@@ -659,7 +812,7 @@ export class SqliteRunStore implements RunStore {
 
   getPendingJob(
     runId: RunId,
-  ): Effect.Effect<GeneratePlanJob | null, WorkflowStoreError> {
+  ): Effect.Effect<Job | null, WorkflowStoreError> {
     return this.tryStore("read pending Job", () => {
       const row = asJobRow(
         this.database
@@ -670,7 +823,7 @@ export class SqliteRunStore implements RunStore {
       );
       return row === undefined
         ? null
-        : (JSON.parse(row.job_json) as GeneratePlanJob);
+        : (JSON.parse(row.job_json) as Job);
     });
   }
 
@@ -810,19 +963,30 @@ export class SqliteRunStore implements RunStore {
       attemptNumber: row.attempt_number,
       scriptVersion: row.script_version,
       status: row.status,
-      evidencePath: row.evidence_path,
+      evidencePath:
+        row.evidence_path === null || row.evidence_path === ""
+          ? null
+          : row.evidence_path,
     }));
   }
 
   private startScenarioOperation(
     runId: RunId,
     scenarioId: string,
+    attemptNumber: number,
+    scriptVersion: number,
   ): void {
     this.database
       .prepare(
-        "INSERT INTO operations (operation_id, run_id, kind, status, recovery_policy) VALUES (?, ?, 'execute-scenario', 'started', 'record-interrupted')",
+        "INSERT INTO operations (operation_id, run_id, kind, status, recovery_policy, scenario_id, attempt_number, script_version) VALUES (?, ?, 'execute-scenario', 'started', 'record-interrupted', ?, ?, ?)",
       )
-      .run(`${runId}:execute:${scenarioId}:1`, runId);
+      .run(
+        `${runId}:execute:${scenarioId}:${attemptNumber}`,
+        runId,
+        scenarioId,
+        attemptNumber,
+        scriptVersion,
+      );
   }
 
   private ownedTransaction(
