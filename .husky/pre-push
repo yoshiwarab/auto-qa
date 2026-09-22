@@ -1,0 +1,3 @@
+set -eu
+
+fnm exec --using 22 pnpm verify:push

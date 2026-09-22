@@ -1,6 +1,11 @@
-# SwarmForge Four-Role Workflow
+# Legacy SwarmForge four-role workflow
 
-This repository uses the local Herdr-backed SwarmForge fork for implementation:
+SwarmForge is no longer the default development workflow. Use the Git hooks
+and commands in [repository verification](verification.md). No role handoff is
+required. The launchers and configuration below remain available for existing
+sessions; installing Git hooks does not stop those sessions.
+
+The legacy local Herdr-backed SwarmForge fork uses this sequence:
 
 ```text
 user intent

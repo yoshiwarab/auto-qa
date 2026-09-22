@@ -1,0 +1,4 @@
+set -eu
+
+fnm exec --using 22 pnpm exec lint-staged
+fnm exec --using 22 pnpm check

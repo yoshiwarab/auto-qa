@@ -41,12 +41,15 @@ ADRs before changing behavior.
 
 ## Verification
 
-As scripts become available, run focused tests frequently, then:
+Work directly in the repository. SwarmForge roles and model-specific reviews
+are not required. Request extra review only when the change warrants it; missing
+reviewer access must not block otherwise verified work.
+
+Read `docs/verification.md` for the Git hooks and contextual checks. Run focused
+tests frequently, then:
 
 ```bash
-fnm exec --using 22 pnpm test
-fnm exec --using 22 pnpm typecheck
-fnm exec --using 22 pnpm lint
+fnm exec --using 22 pnpm check
 ```
 
 Run browser, crash, mutation, and acceptance gates only through their dedicated

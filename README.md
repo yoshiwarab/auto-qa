@@ -8,6 +8,8 @@ and [ADRs](docs/adr/). Implementation proceeds through
 [seven vertical slices](docs/implementation-slices.md), backed by the
 [testing strategy](docs/testing-strategy.md).
 
-This repository is configured for the Herdr-backed SwarmForge four-role
-workflow. See [the operator guide](docs/swarm-forge.md) for startup, attachment,
-and shutdown commands.
+Development uses repository-owned Git hooks and explicit verification commands.
+Run `fnm exec --using 22 pnpm check` for the fast gate. See
+[repository verification](docs/verification.md) for setup, push checks, and
+deeper browser and mutation checks. No SwarmForge session or role handoff is
+required.
