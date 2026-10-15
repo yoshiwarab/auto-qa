@@ -6,7 +6,8 @@ Read `README.md` first. auto-qa is deliberately small. The finished tool
 
 - Prefer Playwright's own config, CLI flags, reporters and fixtures over custom
   plumbing. Delete before adding; a new abstraction needs more than one use.
-- Plain TypeScript and Node built-ins. No runtime dependencies.
+- Plain TypeScript and Node built-ins. The pinned `@playwright/test` is the
+  only runtime dependency allowed; it runs scratch specs.
 - Never hardcode a Base URL. Tests use the ephemeral server in
   `test/auto-qa.test.ts`.
 - The target application is started and owned by someone else; auto-qa never

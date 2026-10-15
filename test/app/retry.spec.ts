@@ -1,4 +1,4 @@
-import { expect, test } from "auto-qa/test";
+import { expect, test } from "@playwright/test";
 
 test("passes on retry", () => {
   expect(test.info().retry).toBe(1);

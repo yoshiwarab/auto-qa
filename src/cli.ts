@@ -2,27 +2,34 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdirSync } from "node:fs";
-import { createRequire } from "node:module";
-import { constants } from "node:os";
-import { resolve } from "node:path";
+import { constants, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { playwrightFor } from "./playwright.js";
 import { cleanup, kill, processId, runTmpDir } from "./processes.js";
 
-const usage = `usage: auto-qa run [playwright test args...] --base-url <url> [--allow-remote]
+const usage = `usage: auto-qa run [playwright test args...] --base-url <url>
+         [--scratch <spec file>]... [--out <dir>] [--allow-remote]
        auto-qa cleanup`;
 
-const run = async (args: string[]) => {
-  let baseUrl: string | undefined;
-  let allowRemote = false;
-  const playwrightArgs: string[] = [];
+const parse = (args: string[]) => {
+  const options = { baseUrl: "", out: "", allowRemote: false };
+  const scratch: string[] = [];
+  const playwright: string[] = [];
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--allow-remote") allowRemote = true;
-    else if (args[i] === "--base-url") baseUrl = args[++i];
-    else playwrightArgs.push(args[i]!);
+    if (args[i] === "--allow-remote") options.allowRemote = true;
+    else if (args[i] === "--base-url") options.baseUrl = args[++i]!;
+    else if (args[i] === "--out") options.out = args[++i]!;
+    else if (args[i] === "--scratch") scratch.push(resolve(args[++i]!));
+    else playwright.push(args[i]!);
   }
-  if (playwrightArgs.includes("--")) throw new Error("`--` is not supported");
-  if (baseUrl === undefined)
-    throw new Error(`--base-url is required\n${usage}`);
+  if (playwright.includes("--")) throw new Error("`--` is not supported");
+  if (!options.baseUrl) throw new Error(`--base-url is required\n${usage}`);
+  return { ...options, scratch, playwright };
+};
+
+const run = async (args: string[]) => {
+  const { baseUrl, out, allowRemote, scratch, playwright } = parse(args);
   const local = /(^|\.)localhost$|^127\.0\.0\.1$|^\[::1\]$/.test(
     new URL(baseUrl).hostname
   );
@@ -32,48 +39,50 @@ const run = async (args: string[]) => {
     );
   }
 
-  const playwright = createRequire(resolve("package.json")).resolve(
-    "@playwright/test/cli"
-  );
   const runDir = resolve(
-    ".auto-qa/runs",
+    out || (scratch.length ? join(tmpdir(), "auto-qa-runs") : ".auto-qa/runs"),
     `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`
   );
   const owner = processId(process.pid);
   mkdirSync(runTmpDir(owner), { recursive: true });
-  const child = spawn(
-    process.execPath,
-    [
-      `--diagnostic-dir=${runTmpDir(owner)}`, // Marks the runner and workers.
-      playwright,
-      "test",
-      ...playwrightArgs,
-      "--trace=on",
-      `--output=${runDir}`,
-      `--reporter=line,${fileURLToPath(new URL("reporter.js", import.meta.url))}`,
-      ...(local ? [] : ["--grep=@prod-safe(?![\\w-])", "--no-deps"]),
-    ],
-    {
-      detached: true,
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        TMPDIR: runTmpDir(owner),
-        AUTO_QA_BASE_URL: baseUrl,
-        PLAYWRIGHT_TEST_BASE_URL: baseUrl,
-        AUTO_QA_RUN_DIR: runDir,
-      },
-    }
-  );
-
-  // Ask Playwright to stop gracefully so it still writes the manifest, but
-  // never wait on it for more than a few seconds.
-  const interrupt = () => {
-    kill(-child.pid!, "SIGINT");
-    setTimeout(() => kill(-child.pid!, "SIGKILL"), 5000).unref();
-  };
-  process.on("SIGINT", interrupt).on("SIGTERM", interrupt);
   try {
+    const { cli, cwd } = playwrightFor(
+      scratch,
+      join(runTmpDir(owner), "scratch")
+    );
+    const child = spawn(
+      process.execPath,
+      [
+        `--diagnostic-dir=${runTmpDir(owner)}`, // Marks the runner and workers.
+        cli,
+        "test",
+        ...playwright,
+        "--trace=on",
+        `--output=${runDir}`,
+        `--reporter=line,${fileURLToPath(new URL("reporter.js", import.meta.url))}`,
+        ...(local ? [] : ["--grep=@prod-safe(?![\\w-])", "--no-deps"]),
+      ],
+      {
+        cwd,
+        detached: true,
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          TMPDIR: runTmpDir(owner),
+          AUTO_QA_BASE_URL: baseUrl,
+          AUTO_QA_RUN_DIR: runDir,
+          PLAYWRIGHT_TEST_BASE_URL: baseUrl,
+        },
+      }
+    );
+
+    // Ask Playwright to stop gracefully so it still writes the manifest, but
+    // never wait on it for more than a few seconds.
+    const interrupt = () => {
+      kill(-child.pid!, "SIGINT");
+      setTimeout(() => kill(-child.pid!, "SIGKILL"), 5000).unref();
+    };
+    process.on("SIGINT", interrupt).on("SIGTERM", interrupt);
     const [code, signal] = (await once(child, "exit")) as [
       number | null,
       NodeJS.Signals,

@@ -1,4 +1,13 @@
-import { expect, test } from "auto-qa/test";
+import { expect, test } from "@playwright/test";
+import { writeFileSync } from "node:fs";
+
+// The evidence template from skills/qa/SKILL.md.
+test.use({ screenshot: "on" });
+test.afterEach(async ({ page }, testInfo) => {
+  const path = testInfo.outputPath("aria-snapshot.yml");
+  writeFileSync(path, await page.locator("body").ariaSnapshot());
+  await testInfo.attach("aria-snapshot", { path });
+});
 
 test("shows the greeting", async ({ page }) => {
   await page.goto("/");

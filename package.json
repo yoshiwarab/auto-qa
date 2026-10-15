@@ -10,12 +10,6 @@
   "bin": {
     "auto-qa": "dist/src/cli.js"
   },
-  "exports": {
-    "./test": {
-      "types": "./dist/src/test.d.ts",
-      "default": "./dist/src/test.js"
-    }
-  },
   "packageManager": "pnpm@11.17.0",
   "engines": {
     "node": ">=22"
@@ -24,16 +18,16 @@
     "build": "tsc --project tsconfig.build.json",
     "check": "pnpm lint && pnpm build && pnpm typecheck && vitest run",
     "lint": "eslint .",
-    "prepare": "husky",
+    "prepare": "tsc --project tsconfig.build.json",
+    "setup": "husky",
     "test": "pnpm build && vitest run",
     "typecheck": "tsc --project tsconfig.json"
   },
-  "peerDependencies": {
-    "@playwright/test": ">=1.49"
+  "dependencies": {
+    "@playwright/test": "1.64.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
-    "@playwright/test": "^1.62.0",
     "@types/node": "^22.20.1",
     "eslint": "^9.39.5",
     "husky": "^9.1.7",

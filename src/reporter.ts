@@ -10,9 +10,18 @@ import type {
   TestResult,
 } from "@playwright/test/reporter";
 
+type Attempt = {
+  status: string;
+  error: string | null;
+  attachments: { name: string; path: string }[];
+};
+
 // Loaded by `playwright test` itself; checks projects and writes the manifest.
 export default class ManifestReporter implements Reporter {
-  private tests = new Map<string, Record<string, string | null>>();
+  private tests = new Map<
+    string,
+    { title: string; file: string; status: string; attempts: Attempt[] }
+  >();
 
   // Runs before any test. Playwright ignores errors thrown by reporters, so
   // every failure here, including an unparsable URL, exits the run instead.
@@ -41,23 +50,24 @@ export default class ManifestReporter implements Reporter {
     }
   }
 
+  // Every attempt is kept, so retries show up as flaky; the test's status is
+  // its latest attempt's. Attachment paths are absolute.
   onTestEnd(test: TestCase, result: TestResult) {
-    const evidence = (name: string) => {
-      const path = result.attachments.find(
-        (attachment) => attachment.name === name
-      )?.path;
-      return path && existsSync(path) ? relative(process.cwd(), path) : null;
-    };
-    // Keyed by test, so a retry replaces the earlier attempt.
-    this.tests.set(test.id, {
+    const entry = this.tests.get(test.id) ?? {
       title: test.titlePath().slice(3).join(" › "),
       file: relative(process.cwd(), test.location.file),
       status: result.status,
+      attempts: [],
+    };
+    entry.status = result.status;
+    entry.attempts.push({
+      status: result.status,
       error: stripVTControlCharacters(result.error?.message ?? "") || null,
-      screenshot: evidence("screenshot"),
-      trace: evidence("trace"),
-      ariaSnapshot: evidence("aria-snapshot"),
+      attachments: result.attachments.flatMap(({ name, path }) =>
+        path && existsSync(path) ? [{ name, path }] : []
+      ),
     });
+    this.tests.set(test.id, entry);
   }
 
   onEnd(result: FullResult) {
@@ -68,6 +78,6 @@ export default class ManifestReporter implements Reporter {
       manifest,
       `${JSON.stringify({ status: result.status, tests }, null, 2)}\n`
     );
-    console.log(`auto-qa: manifest ${relative(process.cwd(), manifest)}`);
+    console.log(`auto-qa: manifest ${manifest}`);
   }
 }

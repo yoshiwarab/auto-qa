@@ -1,4 +1,4 @@
-import { test } from "auto-qa/test";
+import { test } from "@playwright/test";
 
 test("idles without a page", async () => {
   test.setTimeout(120_000);
