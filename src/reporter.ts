@@ -5,6 +5,7 @@ import type {
   FullConfig,
   FullResult,
   Reporter,
+  Suite,
   TestCase,
   TestResult,
 } from "@playwright/test/reporter";
@@ -15,10 +16,11 @@ export default class ManifestReporter implements Reporter {
 
   // Runs before any test. Playwright ignores errors thrown by reporters, so
   // every failure here, including an unparsable URL, exits the run instead.
-  onBegin(config: FullConfig) {
+  onBegin(_: FullConfig, suite: Suite) {
     try {
       const allowed = new URL(process.env.AUTO_QA_BASE_URL!).origin;
-      for (const { name, use } of config.projects) {
+      // Only projects selected for this run (e.g. by --project) have suites.
+      for (const { name, use } of suite.suites.map((s) => s.project()!)) {
         // Other browsers carry no profile marker for cleanup to find.
         if ((use.browserName ?? "chromium") !== "chromium")
           throw new Error(

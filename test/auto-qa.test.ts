@@ -213,6 +213,20 @@ test("refuses, before any test runs, a project with another baseURL or browser",
   }
 });
 
+test("checks only the projects selected for the run", async () => {
+  const { code, output } = await autoQa(
+    "run",
+    "plain.spec.ts",
+    "--config",
+    "firefox.config.ts",
+    "--project",
+    "chromium",
+    "--base-url",
+    baseUrl
+  ).exited;
+  expect(code, output).toBe(0);
+});
+
 test("treats [::1] and *.localhost as local", async () => {
   for (const url of ["http://[::1]:9", "http://app.localhost:9"]) {
     const { code, output } = await autoQa(
