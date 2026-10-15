@@ -6,26 +6,32 @@ import { constants, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { playwrightFor } from "./playwright.js";
+import { guard, triage } from "./triage.js";
 import { cleanup, kill, processId, runTmpDir } from "./processes.js";
 
 const usage = `usage: auto-qa run [playwright test args...] --base-url <url>
          [--scratch <spec file>]... [--out <dir>] [--allow-remote]
+       auto-qa triage <manifest.json> [--base <git ref>]
+       auto-qa guard [--base <git ref>] [paths...]
        auto-qa cleanup`;
 
+// Removes `--name <value>` from args and returns the value.
+const option = (args: string[], name: string) => {
+  const at = args.indexOf(name);
+  return at < 0 ? undefined : args.splice(at, 2)[1];
+};
+
 const parse = (args: string[]) => {
-  const options = { baseUrl: "", out: "", allowRemote: false };
+  const baseUrl = option(args, "--base-url");
+  const out = option(args, "--out");
   const scratch: string[] = [];
-  const playwright: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--allow-remote") options.allowRemote = true;
-    else if (args[i] === "--base-url") options.baseUrl = args[++i]!;
-    else if (args[i] === "--out") options.out = args[++i]!;
-    else if (args[i] === "--scratch") scratch.push(resolve(args[++i]!));
-    else playwright.push(args[i]!);
-  }
+  for (let spec; (spec = option(args, "--scratch"));)
+    scratch.push(resolve(spec));
+  const playwright = args.filter((arg) => arg !== "--allow-remote");
   if (playwright.includes("--")) throw new Error("`--` is not supported");
-  if (!options.baseUrl) throw new Error(`--base-url is required\n${usage}`);
-  return { ...options, scratch, playwright };
+  if (!baseUrl) throw new Error(`--base-url is required\n${usage}`);
+  const allowRemote = args.includes("--allow-remote");
+  return { baseUrl, out, allowRemote, scratch, playwright };
 };
 
 const run = async (args: string[]) => {
@@ -83,11 +89,8 @@ const run = async (args: string[]) => {
       setTimeout(() => kill(-child.pid!, "SIGKILL"), 5000).unref();
     };
     process.on("SIGINT", interrupt).on("SIGTERM", interrupt);
-    const [code, signal] = (await once(child, "exit")) as [
-      number | null,
-      NodeJS.Signals,
-    ];
-    return code ?? 128 + constants.signals[signal];
+    const [code, signal] = await once(child, "exit");
+    return code ?? 128 + constants.signals[signal as NodeJS.Signals];
   } finally {
     await cleanup(owner);
   }
@@ -95,6 +98,8 @@ const run = async (args: string[]) => {
 
 const main = async ([command, ...args]: string[]) => {
   if (command === "run") return run(args);
+  if (command === "guard") return guard(option(args, "--base"), args);
+  if (command === "triage") return triage(option(args, "--base"), args[0]!);
   if (command !== "cleanup") throw new Error(usage);
   const swept = await cleanup();
   console.log(
@@ -105,10 +110,8 @@ const main = async ([command, ...args]: string[]) => {
 
 main(process.argv.slice(2)).then(
   (code) => (process.exitCode = code),
-  (error: unknown) => {
-    console.error(
-      `auto-qa: ${error instanceof Error ? error.message : String(error)}`
-    );
+  (error: Error) => {
+    console.error(`auto-qa: ${error.message ?? error}`);
     process.exitCode = 2;
   }
 );

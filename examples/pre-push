@@ -1,0 +1,16 @@
+#!/bin/sh
+# auto-qa pre-push hook: runs the e2e suite against your running dev server and,
+# when it fails, writes a triage bundle. Copy it to .git/hooks/pre-push and make
+# it executable, or call it from your hook manager. Needs auto-qa installed in
+# the project (`npx --no` never fetches it from the registry).
+#
+#   AUTO_QA_BASE_URL  your running dev server, e.g. http://localhost:5173
+set -u
+url=${AUTO_QA_BASE_URL:?set AUTO_QA_BASE_URL to your running dev server}
+out=$(mktemp -d)
+npx --no auto-qa run --out "$out" --base-url "$url" && exit 0
+for manifest in "$out"/*/manifest.json; do
+  [ -f "$manifest" ] && npx --no auto-qa triage "$manifest"
+done
+echo "pre-push: the e2e suite failed; read the triage bundle above." >&2
+exit 1

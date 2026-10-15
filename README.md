@@ -50,6 +50,29 @@ Your config's `webServer` and `globalSetup` still run, so keep them safe for
 production.
 
 ```bash
+auto-qa triage <manifest.json> [--base <git ref>]
+```
+
+Writes `triage.md` next to the manifest and prints its path. For every failing
+or flaky test (failed, then passed on a retry), it lists each attempt's status,
+error and evidence paths. It also lists the commits, a `--stat` and the diff of
+non-spec files since `--base`. `--base` defaults to the upstream branch, or to
+`HEAD~1` without one. auto-qa calls no LLM; the qa skill tells an agent how to
+call each failure a regression, drift or flaky.
+
+```bash
+auto-qa guard [--base <git ref>] [paths...]
+```
+
+Healing may change how a test finds things, never what it checks. `guard`
+exits 1 and names each line holding an assertion (`expect`, `.toBe…`,
+`.toHave…`, `.toMatch…`, `.toContain…`, `.toEqual…`, `.toThrow…`) that was
+changed or removed between the merge base with `--base` and the working tree.
+Added lines are fine. Paths default to the project's Playwright test dirs. A
+human who means to change behavior sets `AUTO_QA_ALLOW_ASSERTION_CHANGES=1`.
+Keep asserted locators on their own lines so fixing them never trips it.
+
+```bash
 auto-qa cleanup
 ```
 
@@ -90,6 +113,23 @@ prints, so update the entry whenever you update auto-qa:
 onlyBuiltDependencies:
   - "auto-qa@git+ssh://git@github.com/yoshiwarab/auto-qa.git#<commit>"
 ```
+
+## Wiring it into a project
+
+[`examples/`](examples/) has copyable starting points. Nothing installs itself.
+
+- [`pre-push`](examples/pre-push): a git hook that runs the e2e suite against
+  `$AUTO_QA_BASE_URL` and writes a triage bundle when it fails.
+- [`github-actions-e2e.yml`](examples/github-actions-e2e.yml): on pull
+  requests, it starts the app (replace the marked command), runs the suite and
+  uploads the evidence. On failure it adds `triage.md` to the job summary.
+  It then runs `guard` against the base branch. An opt-in step, commented out,
+  hands the bundle to an agent CLI for a verdict.
+- [`github-actions-prod-smoke.yml`](examples/github-actions-prod-smoke.yml):
+  a nightly run of `@prod-safe` tests against a `PROD_URL` secret.
+
+They call `npx --no auto-qa`, so they use the project's installed auto-qa and
+never fetch one from the registry.
 
 ## Development
 
