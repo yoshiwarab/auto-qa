@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "files": [
-    "dist/src"
+    "dist/src",
+    "skills"
   ],
   "bin": {
     "auto-qa": "dist/src/cli.js"

@@ -43,16 +43,12 @@ are left alone.
 
 ## How agents should use it
 
-1. Write ordinary Playwright specs, but import `{ test, expect }` from
-   `"auto-qa/test"` (for the screenshots and accessibility snapshots) and
-   navigate with relative URLs (`page.goto("/")`).
-2. Run `auto-qa run <spec files> --base-url <your dev server URL>`; tag
-   tests that are safe to run against production (writes to a test user
-   included) with `@prod-safe`. Remote runs can use their own `--config`.
-3. Read the printed `manifest.json`, then open its screenshots, accessibility
-   snapshots and traces (`npx playwright show-trace <trace.zip>`).
+Follow [`skills/qa/SKILL.md`](skills/qa/SKILL.md). To install it as a skill,
+copy or symlink `skills/qa/` into your project's `.claude/skills/` or
+`.cursor/skills/`.
 
-Install it as a dev dependency next to `@playwright/test` (a peer dependency).
+Install auto-qa itself as a dev dependency next to `@playwright/test` (a peer
+dependency).
 
 ## Development
 
