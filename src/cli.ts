@@ -1,101 +1,106 @@
 #!/usr/bin/env node
-
-import { randomUUID } from "node:crypto";
-import { Command } from "commander";
-import { Effect } from "effect";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
+import { constants } from "node:os";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
-  runCliCommand,
-  type CliCommand,
-} from "./cliApplication.js";
-import { cliFailure } from "./cliProtocol.js";
+  cleanup,
+  kill,
+  ownerAlive,
+  ownerToken,
+  runTmpDir,
+} from "./processes.js";
 
-const parseCommand = (argv: readonly string[]): CliCommand => {
-  let command: CliCommand | undefined;
-  const program = new Command()
-    .name("auto-qa")
-    .showHelpAfterError()
-    .configureOutput({
-      writeOut: () => undefined,
-      writeErr: () => undefined,
-    })
-    .exitOverride();
+const usage = `usage: auto-qa run [playwright test args...] --base-url <url> [--allow-remote]
+       auto-qa cleanup`;
 
-  program
-    .command("start")
-    .requiredOption("--base-url <url>")
-    .action((options: { readonly baseUrl: string }) => {
-      command = { type: "start", baseUrl: options.baseUrl };
-    });
-  program.command("job <run-id>").action((runId: string) => {
-    command = { type: "job", runId };
-  });
-  program.command("status <run-id>").action((runId: string) => {
-    command = { type: "status", runId };
-  });
-  program
-    .command("submit <run-id>")
-    .requiredOption("--job-id <job-id>")
-    .requiredOption("--file <path>")
-    .action(
-      (
-        runId: string,
-        options: {
-          readonly jobId: string;
-          readonly file: string;
-        },
-      ) => {
-        command = {
-          type: "submit",
-          runId,
-          jobId: options.jobId,
-          file: options.file,
-        };
-      },
-    );
-  program
-    .command("runs")
-    .command("abandon <run-id>")
-    .requiredOption("--reason <reason>")
-    .action(
-      (
-        runId: string,
-        options: { readonly reason: string },
-      ) => {
-        command = {
-          type: "abandon",
-          runId,
-          reason: options.reason,
-        };
-      },
-    );
-  program.parse(argv);
-
-  if (command === undefined) {
-    throw new Error("A command is required");
+const run = async (args: string[]) => {
+  let baseUrl: string | undefined;
+  let allowRemote = false;
+  const playwrightArgs: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--allow-remote") allowRemote = true;
+    else if (args[i] === "--base-url") baseUrl = args[++i];
+    else playwrightArgs.push(args[i]!);
   }
-  return command;
+  if (baseUrl === undefined)
+    throw new Error(`--base-url is required\n${usage}`);
+  const local = ["localhost", "127.0.0.1"].includes(new URL(baseUrl).hostname);
+  if (!local && !allowRemote) {
+    throw new Error(
+      `${baseUrl} is not local; pass --allow-remote to run only @readonly tests`
+    );
+  }
+
+  const playwright = createRequire(resolve("package.json")).resolve(
+    "@playwright/test/cli"
+  );
+  const runDir = resolve(
+    ".auto-qa/runs",
+    `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`
+  );
+  const token = ownerToken();
+  mkdirSync(runTmpDir(token), { recursive: true });
+  const child = spawn(
+    process.execPath,
+    [
+      playwright,
+      "test",
+      ...playwrightArgs,
+      "--trace=on",
+      `--output=${runDir}`,
+      `--reporter=line,${fileURLToPath(new URL("reporter.js", import.meta.url))}`,
+      ...(local ? [] : ["--grep=@readonly"]),
+    ],
+    {
+      detached: true,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        TMPDIR: runTmpDir(token),
+        AUTO_QA_BASE_URL: baseUrl,
+        AUTO_QA_RUN_DIR: runDir,
+      },
+    }
+  );
+
+  // Ask Playwright to stop gracefully so it still writes the manifest, but
+  // never wait on it for more than a few seconds.
+  const interrupt = () => {
+    kill(-child.pid!, "SIGINT");
+    setTimeout(() => kill(-child.pid!, "SIGKILL"), 5000).unref();
+  };
+  process.on("SIGINT", interrupt).on("SIGTERM", interrupt);
+  try {
+    const [code, signal] = (await once(child, "exit")) as [
+      number | null,
+      NodeJS.Signals,
+    ];
+    return code ?? 128 + constants.signals[signal];
+  } finally {
+    await cleanup((owner) => owner === token);
+  }
 };
 
-try {
-  const command = parseCommand(process.argv);
-  const outcome = await Effect.runPromise(
-    Effect.either(
-      runCliCommand(command, process.cwd(), randomUUID),
-    ),
+const main = async ([command, ...args]: string[]) => {
+  if (command === "run") return run(args);
+  if (command !== "cleanup") throw new Error(usage);
+  const swept = await cleanup((owner) => !ownerAlive(owner));
+  console.log(
+    `auto-qa: killed ${swept.processes} leftover processes, removed ${swept.dirs} temp dirs`
   );
-  if (outcome._tag === "Left") {
-    const failure = cliFailure(outcome.left, randomUUID());
-    process.stdout.write(
-      `${JSON.stringify(failure.envelope)}\n`,
+  return 0;
+};
+
+main(process.argv.slice(2)).then(
+  (code) => (process.exitCode = code),
+  (error: unknown) => {
+    console.error(
+      `auto-qa: ${error instanceof Error ? error.message : String(error)}`
     );
-    process.exitCode = failure.exitCode;
-  } else {
-    process.stdout.write(`${JSON.stringify(outcome.right)}\n`);
+    process.exitCode = 2;
   }
-} catch (cause) {
-  const failure = cliFailure(cause, randomUUID());
-  process.stdout.write(
-    `${JSON.stringify(failure.envelope)}\n`,
-  );
-  process.exitCode = failure.exitCode;
-}
+);

@@ -1,3 +1,0 @@
-# Make `job` and `status` concurrent read-only commands
-
-The read-only `job` command replaces the ambiguous `next` name and returns the pending Job or current phase without advancing the Run; `status` provides fuller observation. Both may query the last committed SQLite state while a long Turn owns the exclusive mutation lock, aided by WAL mode, while a second mutating command fails quickly with `RUN_BUSY`. Only `start`, `submit`, `rerun`, `resume`, and `runs abandon` may advance workflow state; `rerun --failed` is CLI convenience for answering a pending `confirm-rerun` Job rather than a second unstructured approval path.

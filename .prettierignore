@@ -1,12 +1,4 @@
 node_modules/
 dist/
-build/
-coverage/
-reports/
-tmp/
-.repos/
-.worktrees/
-.swarmforge/
 .auto-qa/
-swarmforge/scripts/
 pnpm-lock.yaml

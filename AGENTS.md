@@ -1,56 +1,18 @@
-# Auto-QA Agent Guidance
+# auto-qa agent guidance
 
-Read `CONTEXT.md`, `UBIQUITOUS_LANGUAGE.md`, `docs/system-overview.md`,
-`docs/implementation-slices.md`, `docs/testing-strategy.md`, and the relevant
-ADRs before changing behavior.
+Read `README.md` first. auto-qa is deliberately small. The finished tool
+(`run`, `cleanup` and a later `triage`) has a budget of about 450 lines of
+`src/`.
 
-## Toolchain
+- Prefer Playwright's own config, CLI flags, reporters and fixtures over custom
+  plumbing. Delete before adding; a new abstraction needs more than one use.
+- Plain TypeScript and Node built-ins. No runtime dependencies.
+- Never hardcode a Base URL. Tests use the ephemeral server in
+  `test/auto-qa.test.ts`.
+- The target application is started and owned by someone else; auto-qa never
+  starts or stops it.
+- Cleanup kills only processes carrying an auto-qa marker, never by name, and
+  never deletes `.auto-qa/runs` evidence.
 
-- Node 22 or newer, with project commands run through FNM using Node 22.
-- pnpm is the package manager.
-- TypeScript is strict.
-- Effect owns services, resources, and typed errors.
-- Commander parses CLI arguments only and hands control to Effect immediately.
-- Vitest is the test runner. Playwright is invoked as a library by Auto-QA and
-  by Vitest-driven integration tests.
-
-## Workspace shape
-
-- This repository is organized to support pnpm workspace packages.
-- The Auto-QA CLI remains the root package unless a dedicated migration moves
-  it.
-- Independently runnable test applications belong under `apps/*`.
-- Test applications are externally started and externally owned Target
-  Applications. Auto-QA receives their harness-supplied ephemeral Base URLs and
-  does not start or stop them.
-- Read `docs/qa-lab.md` before changing QA Lab or its browser-test harness.
-
-## Engineering rules
-
-- Implement one vertical tracer bullet at a time using red/green TDD.
-- Test through the public seams agreed in `docs/testing-strategy.md`; do not
-  couple tests to private helpers or SQLite table layouts.
-- Preserve the host-neutral `WorkflowEngine` boundary.
-- Never hardcode a Base URL in prompts, schemas, Scenario Scripts, fixtures, or
-  defaults. Tests use harness-supplied ephemeral URLs.
-- The Target Application is externally started and externally owned.
-- Do not start work from a later implementation slice until its prerequisites
-  in `docs/implementation-slices.md` are present.
-- Keep automatic work crash-consistent: persist its operation journal entry
-  before beginning side effects and checkpoint every transition.
-
-## Verification
-
-Work directly in the repository. SwarmForge roles and model-specific reviews
-are not required. Request extra review only when the change warrants it; missing
-reviewer access must not block otherwise verified work.
-
-Read `docs/verification.md` for the Git hooks and contextual checks. Run focused
-tests frequently, then:
-
-```bash
-fnm exec --using 22 pnpm check
-```
-
-Run browser, crash, mutation, and acceptance gates only through their dedicated
-scripts so the fast suite remains suitable for frequent use.
+Verify with `fnm exec --using 22 pnpm check`, which runs lint, build,
+typecheck, and the browser tests.

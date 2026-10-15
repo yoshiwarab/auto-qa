@@ -8,15 +8,8 @@
     "isolatedModules": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    "useUnknownInCatchVariables": true,
     "verbatimModuleSyntax": true,
-    "types": ["node", "vitest/globals"]
+    "types": ["node"]
   },
-  "include": [
-    "acceptance/**/*.ts",
-    "src/**/*.ts",
-    "test/**/*.ts",
-    "vitest.config.ts",
-    "vitest.acceptance.config.ts"
-  ]
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
 }

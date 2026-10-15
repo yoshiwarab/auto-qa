@@ -2,3 +2,10 @@ set -eu
 
 fnm exec --using 22 pnpm exec lint-staged
 fnm exec --using 22 pnpm check
+
+# auto-qa must stay small enough to read in one sitting.
+lines=$(cat src/*.ts | wc -l)
+if [ "$lines" -gt 450 ]; then
+  echo "src/ has $lines lines; the budget is 450." >&2
+  exit 1
+fi

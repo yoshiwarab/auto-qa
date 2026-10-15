@@ -1,3 +1,0 @@
-# Route reliability before application remediation
-
-After an atomic `classify-findings` submission, Auto-QA will resolve `test-issue`, `infra-issue`, and interrupted Attempt paths before routing Confirmed Defects or completing reporting. Reliability work is bounded by the Run's Script-replacement, retry, and active-work budgets; every prior Attempt remains visible. Once those paths pass or exhaust their limits, Auto-QA routes the remaining application Findings as one group. This prevents unreliable coverage from triggering premature application edits without allowing repeated retries to erase an intermittent defect.
