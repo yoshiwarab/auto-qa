@@ -6,14 +6,7 @@ import { createRequire } from "node:module";
 import { constants } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  cleanup,
-  kill,
-  processId,
-  recordRunner,
-  runTmpDir,
-} from "./processes.js";
-import { isLocal } from "./reporter.js";
+import { cleanup, kill, processId, runTmpDir } from "./processes.js";
 
 const usage = `usage: auto-qa run [playwright test args...] --base-url <url> [--allow-remote]
        auto-qa cleanup`;
@@ -30,7 +23,9 @@ const run = async (args: string[]) => {
   if (playwrightArgs.includes("--")) throw new Error("`--` is not supported");
   if (baseUrl === undefined)
     throw new Error(`--base-url is required\n${usage}`);
-  const local = isLocal(baseUrl);
+  const local = /(^|\.)localhost$|^127\.0\.0\.1$|^\[::1\]$/.test(
+    new URL(baseUrl).hostname
+  );
   if (!local && !allowRemote) {
     throw new Error(
       `${baseUrl} is not local; pass --allow-remote to run only @prod-safe tests`
@@ -49,6 +44,7 @@ const run = async (args: string[]) => {
   const child = spawn(
     process.execPath,
     [
+      `--diagnostic-dir=${runTmpDir(owner)}`, // Marks the runner and workers.
       playwright,
       "test",
       ...playwrightArgs,
@@ -64,12 +60,11 @@ const run = async (args: string[]) => {
         ...process.env,
         TMPDIR: runTmpDir(owner),
         AUTO_QA_BASE_URL: baseUrl,
+        PLAYWRIGHT_TEST_BASE_URL: baseUrl,
         AUTO_QA_RUN_DIR: runDir,
       },
     }
   );
-
-  recordRunner(owner, child.pid!);
 
   // Ask Playwright to stop gracefully so it still writes the manifest, but
   // never wait on it for more than a few seconds.

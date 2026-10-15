@@ -9,28 +9,31 @@ import type {
   TestResult,
 } from "@playwright/test/reporter";
 
-export const isLocal = (url: string) => {
-  const host = new URL(url).hostname;
-  return (
-    ["localhost", "127.0.0.1", "[::1]"].includes(host) ||
-    host.endsWith(".localhost")
-  );
-};
-
-// Loaded by `playwright test` itself; guards base URLs and writes the manifest.
+// Loaded by `playwright test` itself; checks projects and writes the manifest.
 export default class ManifestReporter implements Reporter {
   private tests = new Map<string, Record<string, string | null>>();
 
-  // Runs before any test. Specs that import plain @playwright/test use their
-  // project's baseURL, so every project must stay local or match --base-url.
+  // Runs before any test. Playwright ignores errors thrown by reporters, so
+  // every failure here, including an unparsable URL, exits the run instead.
   onBegin(config: FullConfig) {
-    const allowed = new URL(process.env.AUTO_QA_BASE_URL!).origin;
-    for (const { name, use } of config.projects) {
-      if (!use.baseURL || isLocal(use.baseURL)) continue;
-      if (new URL(use.baseURL).origin === allowed) continue;
+    try {
+      const allowed = new URL(process.env.AUTO_QA_BASE_URL!).origin;
+      for (const { name, use } of config.projects) {
+        // Other browsers carry no profile marker for cleanup to find.
+        if ((use.browserName ?? "chromium") !== "chromium")
+          throw new Error(
+            `project "${name}" uses ${use.browserName}; only Chromium is supported`
+          );
+        // Specs that import plain @playwright/test use this baseURL.
+        if (use.baseURL && new URL(use.baseURL).origin !== allowed)
+          throw new Error(
+            `project "${name}" uses baseURL ${use.baseURL}, not --base-url ${allowed}`
+          );
+      }
+    } catch (error) {
       writeSync(
         2,
-        `auto-qa: project "${name}" uses baseURL ${use.baseURL}, which is neither local nor --base-url\n`
+        `auto-qa: ${error instanceof Error ? error.message : String(error)}\n`
       );
       process.exit(2);
     }

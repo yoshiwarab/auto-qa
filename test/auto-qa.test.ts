@@ -34,9 +34,7 @@ const processes = () =>
   execFileSync(
     "ps",
     ["-A", "-ww", "-o", "pid=", "-o", "pgid=", "-o", "stat=", "-o", "args="],
-    {
-      encoding: "utf8",
-    }
+    { encoding: "utf8", maxBuffer: 1 << 28 }
   )
     .split("\n")
     .flatMap((line) => {
@@ -185,19 +183,34 @@ test("requires --allow-remote for a remote base URL and then runs only @prod-saf
   ]);
 });
 
-test("refuses a project whose baseURL is neither local nor --base-url, before any test runs", async () => {
+test("points plain @playwright/test specs at --base-url", async () => {
   const { code, output } = await autoQa(
     "run",
     "plain.spec.ts",
-    "--config",
-    "prod.config.ts",
     "--base-url",
     baseUrl
   ).exited;
+  expect(code, output).toBe(0);
+});
 
-  expect(code).toBe(2);
-  expect(output).toContain("https://prod.invalid");
-  expect(output).not.toContain("plain spec ran");
+test("refuses, before any test runs, a project with another baseURL or browser", async () => {
+  for (const [config, reason] of [
+    ["prod.config.ts", "https://prod.invalid"],
+    ["firefox.config.ts", "firefox"],
+  ]) {
+    const { code, output } = await autoQa(
+      "run",
+      "plain.spec.ts",
+      "--config",
+      config!,
+      "--base-url",
+      baseUrl
+    ).exited;
+
+    expect(code).toBe(2);
+    expect(output).toContain(reason);
+    expect(output).not.toContain("plain spec ran");
+  }
 });
 
 test("treats [::1] and *.localhost as local", async () => {
