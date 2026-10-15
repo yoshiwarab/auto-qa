@@ -20,7 +20,8 @@ killed when the run ends, including on Ctrl-C or SIGTERM.
 A non-local `--base-url` (anything but `localhost` or `127.0.0.1`) requires
 `--allow-remote`. Such a run passes `--grep @readonly --no-deps`, so only tests
 tagged exactly `@readonly` run, with no setup projects. Your own `--grep` is
-replaced, and `--` is rejected.
+replaced, and `--` is rejected. Your config's `webServer` and `globalSetup`
+still run, so keep them safe for production.
 
 ```bash
 auto-qa cleanup
