@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import type {
@@ -17,7 +17,7 @@ export default class ManifestReporter implements Reporter {
       const path = result.attachments.find(
         (attachment) => attachment.name === name
       )?.path;
-      return path === undefined ? null : relative(process.cwd(), path);
+      return path && existsSync(path) ? relative(process.cwd(), path) : null;
     };
     this.tests.push({
       title: test.titlePath().slice(3).join(" › "),
@@ -37,15 +37,6 @@ export default class ManifestReporter implements Reporter {
       manifest,
       `${JSON.stringify({ status: result.status, tests: this.tests }, null, 2)}\n`
     );
-    const passed = this.tests.filter((test) => test.status === "passed").length;
-    console.log(
-      `\nauto-qa: ${passed}/${this.tests.length} passed (${result.status})`
-    );
-    for (const test of this.tests.filter((test) => test.status !== "passed")) {
-      console.log(
-        `  ${test.status}: ${test.title} (${test.file}) ${test.error?.split("\n")[0] ?? ""}`
-      );
-    }
     if (this.tests.some((test) => test.ariaSnapshot === null)) {
       console.log(
         `  some tests lack screenshots/accessibility snapshots: import { test } from "auto-qa/test"`

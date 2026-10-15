@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:http";
@@ -13,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, expect, onTestFinished, test } from "vitest";
 
 const app = fileURLToPath(new URL("app/", import.meta.url));
 const cli = fileURLToPath(new URL("../dist/src/cli.js", import.meta.url));
@@ -99,7 +100,9 @@ const manifestOf = (output: string) => {
 };
 
 const ownedTmpDirs = (cliPid: number) =>
-  readdirSync(tmpdir()).filter((name) => name.startsWith(`auto-qa-${cliPid}-`));
+  readdirSync(tmpdir()).filter((name) =>
+    new RegExp(`^auto-qa-${cliPid}-\\d+$`).test(name)
+  );
 
 test("writes evidence and a manifest for passing and failing tests, leaving no browsers", async () => {
   const run = autoQa("run", "app.spec.ts", "--base-url", baseUrl);
@@ -110,6 +113,7 @@ test("writes evidence and a manifest for passing and failing tests, leaving no b
   expect(tests.map((t) => [t.title, t.status])).toEqual([
     ["shows the greeting", "passed"],
     ["finds a missing button", "failed"],
+    ["is not @readonly-safe", "passed"],
     ["uses the auto-qa base URL @readonly", "passed"],
   ]);
   expect(tests[0]?.error).toBeNull();
@@ -151,6 +155,15 @@ test("requires --allow-remote for a remote base URL and then runs only @readonly
   ).exited;
   expect(refused.code).toBe(2);
   expect(refused.output).toContain("--allow-remote");
+  const terminated = await autoQa(
+    "run",
+    "app.spec.ts",
+    "--base-url",
+    "https://qa.invalid",
+    "--allow-remote",
+    "--"
+  ).exited;
+  expect(terminated.code).toBe(2);
 
   const { code, output } = await autoQa(
     "run",
@@ -171,7 +184,21 @@ test("cleanup kills orphaned browsers but spares live runs, unowned processes an
   await Promise.all([orphaned.browserStarted(), live.browserStarted()]);
   orphaned.child.kill("SIGKILL");
   await once(orphaned.child, "exit"); // The orphaned runner keeps its stdout open.
-  const unowned = spawn("sleep", ["300"], { detached: true, stdio: "ignore" });
+  // Merely mentioning an owned temp dir does not make a process or dir owned.
+  const [owned] = ownedTmpDirs(orphaned.child.pid!);
+  const lookalike = join(tmpdir(), `${owned}-notes`);
+  mkdirSync(lookalike);
+  const unowned = spawn(
+    process.execPath,
+    ["-e", "setTimeout(() => {}, 300_000)", join(tmpdir(), owned!)],
+    { detached: true, stdio: "ignore" }
+  );
+  onTestFinished(async () => {
+    unowned.kill();
+    live.child.kill("SIGINT");
+    await live.exited;
+    rmSync(lookalike, { recursive: true, force: true });
+  });
   const evidence = join(app, ".auto-qa/runs/kept/manifest.json");
   mkdirSync(join(evidence, ".."), { recursive: true });
   writeFileSync(evidence, "{}");
@@ -188,8 +215,5 @@ test("cleanup kills orphaned browsers but spares live runs, unowned processes an
   expect(alive(live.browsers)).not.toEqual([]);
   expect(alive([unowned.pid!])).toEqual([unowned.pid]);
   expect(existsSync(evidence)).toBe(true);
-
-  unowned.kill();
-  live.child.kill("SIGINT");
-  await live.exited;
+  expect(existsSync(lookalike)).toBe(true);
 });

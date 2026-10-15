@@ -26,6 +26,7 @@ const run = async (args: string[]) => {
     else if (args[i] === "--base-url") baseUrl = args[++i];
     else playwrightArgs.push(args[i]!);
   }
+  if (playwrightArgs.includes("--")) throw new Error("`--` is not supported");
   if (baseUrl === undefined)
     throw new Error(`--base-url is required\n${usage}`);
   const local = ["localhost", "127.0.0.1"].includes(new URL(baseUrl).hostname);
@@ -53,7 +54,7 @@ const run = async (args: string[]) => {
       "--trace=on",
       `--output=${runDir}`,
       `--reporter=line,${fileURLToPath(new URL("reporter.js", import.meta.url))}`,
-      ...(local ? [] : ["--grep=@readonly"]),
+      ...(local ? [] : ["--grep=@readonly(?![\\w-])", "--no-deps"]),
     ],
     {
       detached: true,

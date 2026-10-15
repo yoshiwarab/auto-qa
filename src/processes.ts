@@ -4,8 +4,9 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 // Each run owns a private TMPDIR named after its owner process. Playwright's
-// runner and workers inherit it in their environment, and Chromium's group
-// leader carries it in --user-data-dir. That path is the only marker we kill by.
+// runner and workers inherit it as TMPDIR. Chromium overwrites its environ and
+// joins its argv with spaces, but its group leader keeps --user-data-dir under
+// that TMPDIR. Those two exact markers are the only things we kill by.
 const ownedPrefix = () => join(tmpdir(), "auto-qa-");
 
 const read = (path: string) => {
@@ -26,9 +27,9 @@ export const ownerAlive = (token: string) =>
 
 export const runTmpDir = (token: string) => ownedPrefix() + token;
 
-// The owner token in a text that contains an owned temp dir path, if any.
-const ownedToken = (text: string) =>
-  text.split(ownedPrefix())[1]?.match(/^\d+-\d+/)?.[0];
+// The owner token after `key` + an owned temp dir path, if `text` has one.
+const ownedToken = (text: string, key = "") =>
+  text.split(key + ownedPrefix())[1]?.match(/^\d+-\d+(?=$|\/|\0)/)?.[0];
 
 export const kill = (target: number, signal: NodeJS.Signals) => {
   try {
@@ -41,9 +42,12 @@ export const kill = (target: number, signal: NodeJS.Signals) => {
 const ownedPids = (matches: (token: string) => boolean) =>
   readdirSync("/proc").filter((pid) => {
     if (!/^\d+$/.test(pid) || Number(pid) === process.pid) return false;
-    const token = ownedToken(
-      read(`/proc/${pid}/cmdline`) + read(`/proc/${pid}/environ`)
-    );
+    const token =
+      ownedToken(`\0${read(`/proc/${pid}/environ`)}`, "\0TMPDIR=") ??
+      ownedToken(
+        ` ${read(`/proc/${pid}/cmdline`)}`.replaceAll("\0", " "),
+        " --user-data-dir="
+      );
     return token !== undefined && matches(token);
   });
 

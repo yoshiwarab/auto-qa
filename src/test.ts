@@ -6,20 +6,12 @@ export { expect } from "@playwright/test";
 // Specs import { test, expect } from "auto-qa/test" to get auto-qa's base URL
 // plus a final screenshot and accessibility snapshot for every test.
 export const test = base.extend<{ autoQaEvidence: void }>({
+  screenshot: "on",
   baseURL: async ({ baseURL }, use) =>
     use(process.env.AUTO_QA_BASE_URL ?? baseURL),
   autoQaEvidence: [
     async ({ page }, use, testInfo) => {
       await use();
-      const screenshot = testInfo.outputPath("screenshot.png");
-      await page.screenshot({ path: screenshot, timeout: 5000 }).then(
-        () =>
-          testInfo.attach("screenshot", {
-            path: screenshot,
-            contentType: "image/png",
-          }),
-        () => {}
-      );
       const aria = await page
         .locator("body")
         .ariaSnapshot({ timeout: 5000 })

@@ -15,9 +15,12 @@ trace, a final screenshot and an accessibility snapshot for every test.
 Evidence goes to `.auto-qa/runs/<id>/`. The `manifest.json` there lists each
 test's title, file, status, error and evidence paths. Playwright and its
 browsers run in their own process groups under a private temp dir. They are
-killed when the run ends, including on Ctrl-C or SIGTERM. A non-local
-`--base-url` (anything but `localhost` or `127.0.0.1`) requires
-`--allow-remote` and runs only tests tagged `@readonly`.
+killed when the run ends, including on Ctrl-C or SIGTERM.
+
+A non-local `--base-url` (anything but `localhost` or `127.0.0.1`) requires
+`--allow-remote`. Such a run passes `--grep @readonly --no-deps`, so only tests
+tagged exactly `@readonly` run, with no setup projects. Your own `--grep` is
+replaced, and `--` is rejected.
 
 ```bash
 auto-qa cleanup
