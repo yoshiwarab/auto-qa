@@ -15,8 +15,9 @@
     "node": ">=22"
   },
   "scripts": {
+    "budget": "lines=$(cat src/*.ts | wc -l); [ $lines -le 450 ] || { echo \"src/ has $lines lines; the budget is 450\" >&2; exit 1; }",
     "build": "tsc --project tsconfig.build.json",
-    "check": "pnpm lint && pnpm build && pnpm typecheck && vitest run",
+    "check": "pnpm budget && pnpm lint && pnpm build && pnpm typecheck && vitest run",
     "lint": "eslint .",
     "prepare": "tsc --project tsconfig.build.json",
     "setup": "husky",

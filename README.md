@@ -148,4 +148,5 @@ fnm exec --using 22 pnpm run setup   # install the Git hooks (`pnpm setup` is a 
 fnm exec --using 22 pnpm check   # lint, build, typecheck, tests
 ```
 
-The pre-commit hook runs `pnpm check` and keeps `src/` under 450 lines.
+`pnpm check` also keeps `src/` under 450 lines. The pre-commit hook and CI run
+it.
