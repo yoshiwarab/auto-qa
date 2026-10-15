@@ -37,16 +37,14 @@ test("saving a draft lists it", async ({ page }) => {
   await page.goto("/drafts");
   await page.getByLabel("Title").fill("Q3 plan");
   await page.getByRole("button", { name: "Save" }).click();
-  const draft = page.getByRole("link", { name: "Q3 plan" });
-  await expect(draft).toBeVisible();
+  await expect(page.getByRole("link", { name: "Q3 plan" })).toBeVisible();
 });
 ```
 
 - Keep the `test.use` and `test.afterEach` lines: they record the evidence.
 - Use relative URLs in `page.goto`; auto-qa supplies the base URL.
 - Locate by role or label (`getByRole`, `getByLabel`). Fall back to `getByText`
-  only when nothing else fits. Never use CSS, XPath or `nth-child`. Give an
-  asserted locator its own `const` line, so healing it never touches the check.
+  only when nothing else fits. Never use CSS, XPath or `nth-child`.
 - Assert behavior or state with at least one `expect`. A screenshot is
   evidence, not an assertion.
 - Drive the real user path (click, type, submit). Never call internal setters
@@ -100,8 +98,12 @@ Use the error, screenshot and snapshot to decide which is wrong:
 
 - App wrong: fix the app and rerun. Never weaken or delete an assertion to get
   green.
-- Spec wrong: fix only locators, waits or navigation, and say in your report
-  that you changed the spec and why.
+- Spec wrong: fix only how it clicks, types, navigates or waits, and say in
+  your report that you changed the spec and why.
+
+You may freely fix how a test clicks, types and navigates. Changing what an
+assertion looks at, or what it expects, needs a human to set
+`AUTO_QA_ALLOW_ASSERTION_CHANGES=1`; report it and leave it to them.
 
 ## 5. When the e2e suite fails
 
@@ -111,14 +113,13 @@ diff since the base branch to decide:
 
 - **Regression** (the app broke): report it with the evidence and fix the app.
   Never touch the spec.
-- **Drift** (an intended UI change broke a locator): fix only locators, waits
-  or navigation, then run `auto-qa guard` and the suite again. Guard fails if
-  any line holding an assertion changed.
+- **Drift** (an intended UI change broke a locator): fix how the test clicks,
+  types or navigates, then run `auto-qa guard` and the suite again. Guard fails
+  if any line of an `expect(...)` changed, its locator included.
 - **Flaky** (failed, then passed on a retry): rerun once. If it is still flaky,
   report it. Never loosen a timeout or assertion to hide it.
 
-State the verdict and its evidence in your report or PR. Only a human sets
-`AUTO_QA_ALLOW_ASSERTION_CHANGES=1`, when they mean to change behavior.
+State the verdict and its evidence in your report or PR.
 
 ## 6. Afterwards
 
