@@ -73,28 +73,32 @@ const testDirs = () => {
   return [...new Set(config.projects.map((p) => p.testDir))];
 };
 
-// The removed or changed lines of a diff that hold an assertion, as
-// `file:line: text` with the line number on the old side.
+// The removed or changed lines of a diff that are part of an assertion, as
+// `file:line: text` with the line number on the old side. A wrapped
+// `expect(` counts until its parentheses close, so its locator line does too.
 const assertionLines = (diff: string) => {
   const found: string[] = [];
-  let [file, line] = ["", 0];
+  let [file, line, depth] = ["", 0, 0];
   for (const text of diff.split("\n")) {
     if (text.startsWith("--- ")) file = text.slice(4);
-    else if (text.startsWith("@@")) line = Number(/-(\d+)/.exec(text)![1]);
-    else if (text.startsWith("-")) {
-      if (assertion.test(text))
+    else if (text.startsWith("@@"))
+      [line, depth] = [Number(/-(\d+)/.exec(text)![1]), 0];
+    else if (/^[ -]/.test(text)) {
+      if (text.startsWith("-") && (depth > 0 || assertion.test(text)))
         found.push(`  ${file}:${line}: ${text.slice(1).trim()}`);
+      if (depth > 0 || /\bexpect\b/.test(text))
+        depth += text.split("(").length - text.split(")").length;
       line++;
     }
   }
   return found;
 };
 
-// Healing may change how a test finds things, never what it checks: fails
-// when a line holding an assertion was changed or removed since `base`.
+// Agents may fix how a test acts, never what it checks: fails when a line of
+// an assertion was changed or removed since `base`.
 export const guard = (base = defaultBase(), paths: string[] = []) => {
   const diff = run("git", [
-    ...["diff", "--no-color", "--no-prefix", "--unified=0"],
+    ...["diff", "--no-color", "--no-prefix", "--function-context"],
     ...["--merge-base", base, "--", ...(paths.length ? paths : testDirs())],
   ]);
   if (diff.status !== 0) throw new Error(diff.stderr);
@@ -104,8 +108,9 @@ export const guard = (base = defaultBase(), paths: string[] = []) => {
     [
       `auto-qa guard: assertions changed or removed since ${base} (line numbers as of ${base}):`,
       ...changed,
-      "Healing may change how a test finds things, never what it checks.",
-      "If this behavior change is intended, rerun with AUTO_QA_ALLOW_ASSERTION_CHANGES=1.",
+      "Agents may freely fix how a test clicks, types and navigates. Changing what",
+      "an assertion looks at, or what it expects, needs a human to set",
+      "AUTO_QA_ALLOW_ASSERTION_CHANGES=1.",
     ].join("\n")
   );
   return process.env.AUTO_QA_ALLOW_ASSERTION_CHANGES === "1" ? 0 : 1;

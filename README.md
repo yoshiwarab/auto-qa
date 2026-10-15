@@ -64,13 +64,14 @@ call each failure a regression, drift or flaky.
 auto-qa guard [--base <git ref>] [paths...]
 ```
 
-Healing may change how a test finds things, never what it checks. `guard`
-exits 1 and names each line holding an assertion (`expect`, `.toBe…`,
-`.toHave…`, `.toMatch…`, `.toContain…`, `.toEqual…`, `.toThrow…`) that was
-changed or removed between the merge base with `--base` and the working tree.
-Added lines are fine. Paths default to the project's Playwright test dirs. A
-human who means to change behavior sets `AUTO_QA_ALLOW_ASSERTION_CHANGES=1`.
-Keep asserted locators on their own lines so fixing them never trips it.
+Agents may freely fix how a test clicks, types and navigates. Changing what
+an assertion looks at, or what it expects, needs a human to set
+`AUTO_QA_ALLOW_ASSERTION_CHANGES=1`. `guard` exits 1 and names each line of an
+assertion that was changed or removed between the merge base with `--base` and
+the working tree: a line with `expect`, `.toBe…`, `.toHave…`, `.toMatch…`,
+`.toContain…`, `.toEqual…` or `.toThrow…`, and every line inside a wrapped
+`expect(...)`, so the locator it checks counts too. Added lines are fine. Paths
+default to the project's Playwright test dirs.
 
 ```bash
 auto-qa cleanup

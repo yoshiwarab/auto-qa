@@ -417,7 +417,7 @@ test("triage and guard tell regressions, healed locators, changed assertions and
     writeFileSync(join(repo, path), text);
   };
   const edit = (path: string, from: string, to: string) =>
-    write(path, readFileSync(join(repo, path), "utf8").replace(from, to));
+    write(path, readFileSync(join(repo, path), "utf8").replaceAll(from, to));
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
   mkdirSync(join(repo, "node_modules/.bin"), { recursive: true });
@@ -438,7 +438,7 @@ test("triage and guard tell regressions, healed locators, changed assertions and
   write(
     "app/index.html",
     `<button onclick="document.querySelector('output').value = 'Saved'">Save</button>
-<output></output>\n`
+<output aria-label="Save status"></output>\n`
   );
   write(
     "e2e/save.spec.ts",
@@ -446,9 +446,11 @@ test("triage and guard tell regressions, healed locators, changed assertions and
 
 test("saving shows a confirmation", async ({ page }) => {
   await page.goto("/");
-  const save = page.getByRole("button", { name: "Save" });
-  await save.click();
-  await expect(page.getByRole("status")).toHaveText("Saved");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("status", { name: "Save status" })).toHaveText("Saved");
+  await expect(
+    page.getByRole("status", { name: "Save status" })
+  ).toBeVisible();
 });
 `
   );
@@ -531,24 +533,26 @@ test("saving shows a confirmation", async ({ page }) => {
   expect(hookCode, hookOutput).toBe(1);
   expect(existsSync(/auto-qa: triage (\S+)/.exec(hookOutput)![1]!)).toBe(true);
 
-  // Drift: healing only the locator passes the guard and the suite.
+  // Drift: healing a click's locator passes the guard and the suite.
   edit("e2e/save.spec.ts", 'name: "Save"', 'name: "Store"');
   const healed = await autoQaIn(repo, "guard", "--base", baseline).exited;
   expect(healed.code, healed.output).toBe(0);
   expect((await suite()).code).toBe(0);
   commit("Heal the Save locator");
 
-  // Changing what a spec checks fails the guard, naming the line, unless a
-  // human says the behavior change is intended.
-  // (The click line changes too, so the assertion isn't first in its hunk.)
-  edit("e2e/save.spec.ts", "await save.click();", "await save.dblclick();");
-  edit("e2e/save.spec.ts", 'toHaveText("Saved")', 'toHaveText("Stored")');
+  // Weakening what an assertion looks at, inline or wrapped, fails the guard
+  // and names each line, unless a human says the change is intended.
+  edit("e2e/save.spec.ts", '"Save status"', '"Save"');
   const weakened = await autoQaIn(repo, "guard", "--base", baseline).exited;
   expect(weakened.code).toBe(1);
   expect(weakened.output).toContain(
-    'e2e/save.spec.ts:7: await expect(page.getByRole("status")).toHaveText("Saved");'
+    'e2e/save.spec.ts:6: await expect(page.getByRole("status", { name: "Save status" })).toHaveText("Saved");'
   );
-  expect(weakened.output).toContain("AUTO_QA_ALLOW_ASSERTION_CHANGES=1");
+  expect(weakened.output).toContain(
+    'e2e/save.spec.ts:8: page.getByRole("status", { name: "Save status" })'
+  );
+  expect(weakened.output).not.toContain("e2e/save.spec.ts:5:");
+  expect(weakened.output).toContain("needs a human to set");
   process.env.AUTO_QA_ALLOW_ASSERTION_CHANGES = "1";
   const allowed = autoQaIn(repo, "guard", "--base", baseline).exited;
   delete process.env.AUTO_QA_ALLOW_ASSERTION_CHANGES;
