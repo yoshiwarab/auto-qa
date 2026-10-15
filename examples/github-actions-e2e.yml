@@ -1,6 +1,7 @@
 # auto-qa e2e suite on pull requests. Copy to .github/workflows/e2e.yml and
-# replace the two REPLACE placeholders. If your playwright.config sets baseURL,
-# it must equal APP_URL (or read process.env.PLAYWRIGHT_TEST_BASE_URL).
+# replace the two REPLACE placeholders. Your playwright.config should set
+# `baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL ?? "<local dev URL>"`, so it
+# uses APP_URL here; a hard-coded baseURL must equal APP_URL.
 name: e2e
 
 on:

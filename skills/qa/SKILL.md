@@ -66,8 +66,10 @@ Find the URL; don't guess it:
    (`lsof -a -p <pid> -d cwd`).
 2. Otherwise read the dev script in `package.json` and its port. With no dev
    script, serve the static files.
-3. If `playwright.config.*` sets `baseURL`, pass exactly that URL. auto-qa
-   refuses a run whose project `baseURL` differs from `--base-url`.
+3. If `playwright.config.*` hard-codes `baseURL`, pass exactly that URL;
+   auto-qa refuses any other. When installing auto-qa in a project, make the
+   config read `baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL ?? "<local dev URL>"`
+   so `--base-url` works for local, CI and prod smoke runs.
 
 Never start a second instance on top of the user's. If you start one, run it
 in the background and wait until the URL responds. When done, stop it and
