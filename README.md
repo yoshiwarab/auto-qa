@@ -18,8 +18,8 @@ browsers run in their own process groups under a private temp dir. They are
 killed when the run ends, including on Ctrl-C or SIGTERM.
 
 A non-local `--base-url` (anything but `localhost` or `127.0.0.1`) requires
-`--allow-remote`. Such a run passes `--grep @readonly --no-deps`, so only tests
-tagged exactly `@readonly` run, with no setup projects. Your own `--grep` is
+`--allow-remote`. Such a run passes `--grep @prod-safe --no-deps`, so only tests
+tagged exactly `@prod-safe` run, with no setup projects. Your own `--grep` is
 replaced, and `--` is rejected. Your config's `webServer` and `globalSetup`
 still run, so keep them safe for production.
 
@@ -37,7 +37,8 @@ by process name. Active runs and `.auto-qa/runs` evidence are left alone.
 1. Write ordinary Playwright specs, but import `{ test, expect }` from
    `"auto-qa/test"` and navigate with relative URLs (`page.goto("/")`).
 2. Run `auto-qa run <spec files> --base-url <your dev server URL>`; tag
-   anything safe for production with `@readonly`.
+   tests that are safe to run against production (writes to a test user
+   included) with `@prod-safe`. Remote runs can use their own `--config`.
 3. Read the printed `manifest.json`, then open its screenshots, accessibility
    snapshots and traces (`npx playwright show-trace <trace.zip>`).
 

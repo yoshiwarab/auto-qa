@@ -32,7 +32,7 @@ const run = async (args: string[]) => {
   const local = ["localhost", "127.0.0.1"].includes(new URL(baseUrl).hostname);
   if (!local && !allowRemote) {
     throw new Error(
-      `${baseUrl} is not local; pass --allow-remote to run only @readonly tests`
+      `${baseUrl} is not local; pass --allow-remote to run only @prod-safe tests`
     );
   }
 
@@ -54,7 +54,7 @@ const run = async (args: string[]) => {
       "--trace=on",
       `--output=${runDir}`,
       `--reporter=line,${fileURLToPath(new URL("reporter.js", import.meta.url))}`,
-      ...(local ? [] : ["--grep=@readonly(?![\\w-])", "--no-deps"]),
+      ...(local ? [] : ["--grep=@prod-safe(?![\\w-])", "--no-deps"]),
     ],
     {
       detached: true,

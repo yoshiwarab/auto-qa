@@ -12,8 +12,8 @@ test("finds a missing button", async ({ page }) => {
   });
 });
 
-test("is not @readonly-safe", () => {});
+test("is not @prod-safe-ish", () => {});
 
-test("uses the auto-qa base URL @readonly", ({ baseURL }) => {
+test("uses the auto-qa base URL @prod-safe", ({ baseURL }) => {
   expect(baseURL).toBe(process.env.AUTO_QA_BASE_URL);
 });

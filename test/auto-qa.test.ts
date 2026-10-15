@@ -113,8 +113,8 @@ test("writes evidence and a manifest for passing and failing tests, leaving no b
   expect(tests.map((t) => [t.title, t.status])).toEqual([
     ["shows the greeting", "passed"],
     ["finds a missing button", "failed"],
-    ["is not @readonly-safe", "passed"],
-    ["uses the auto-qa base URL @readonly", "passed"],
+    ["is not @prod-safe-ish", "passed"],
+    ["uses the auto-qa base URL @prod-safe", "passed"],
   ]);
   expect(tests[0]?.error).toBeNull();
   expect(tests[1]?.error).toContain("Missing");
@@ -146,7 +146,7 @@ test("kills the browsers of an interrupted run", async () => {
   expect(ownedTmpDirs(run.child.pid!)).toEqual([]);
 });
 
-test("requires --allow-remote for a remote base URL and then runs only @readonly tests", async () => {
+test("requires --allow-remote for a remote base URL and then runs only @prod-safe tests", async () => {
   const refused = await autoQa(
     "run",
     "app.spec.ts",
@@ -174,7 +174,7 @@ test("requires --allow-remote for a remote base URL and then runs only @readonly
   ).exited;
   expect(code).toBe(0);
   expect(manifestOf(output).tests.map((t) => [t.title, t.status])).toEqual([
-    ["uses the auto-qa base URL @readonly", "passed"],
+    ["uses the auto-qa base URL @prod-safe", "passed"],
   ]);
 });
 
