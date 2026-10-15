@@ -16,10 +16,17 @@ export const playwrightFor = (scratch: string[], workspace: string) => {
   } catch {
     throw new Error("this project has no @playwright/test; use --scratch");
   }
-  // A no-op when the matching browser is already installed.
+  // A no-op when the matching browser is already installed. Its stderr only
+  // matters on failure; under npx it always warns about a missing project
+  // install, which is expected for scratch runs.
   const install = [cli, "install", "--only-shell", "chromium"];
-  if (spawnSync(process.execPath, install, { stdio: "inherit" }).status !== 0)
-    throw new Error(`could not install Chromium: node ${install.join(" ")}`);
+  const { status, stderr } = spawnSync(process.execPath, install, {
+    stdio: ["ignore", "inherit", "pipe"],
+  });
+  if (status !== 0)
+    throw new Error(
+      `${stderr}\ncould not install Chromium: node ${install.join(" ")}`
+    );
 
   if (scratch.length === 0) return { cli, cwd: process.cwd() };
   mkdirSync(workspace);
