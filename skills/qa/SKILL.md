@@ -37,14 +37,16 @@ test("saving a draft lists it", async ({ page }) => {
   await page.goto("/drafts");
   await page.getByLabel("Title").fill("Q3 plan");
   await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByRole("link", { name: "Q3 plan" })).toBeVisible();
+  const draft = page.getByRole("link", { name: "Q3 plan" });
+  await expect(draft).toBeVisible();
 });
 ```
 
 - Keep the `test.use` and `test.afterEach` lines: they record the evidence.
 - Use relative URLs in `page.goto`; auto-qa supplies the base URL.
 - Locate by role or label (`getByRole`, `getByLabel`). Fall back to `getByText`
-  only when nothing else fits. Never use CSS, XPath or `nth-child`.
+  only when nothing else fits. Never use CSS, XPath or `nth-child`. Give an
+  asserted locator its own `const` line, so healing it never touches the check.
 - Assert behavior or state with at least one `expect`. A screenshot is
   evidence, not an assertion.
 - Drive the real user path (click, type, submit). Never call internal setters
@@ -101,7 +103,24 @@ Use the error, screenshot and snapshot to decide which is wrong:
 - Spec wrong: fix only locators, waits or navigation, and say in your report
   that you changed the spec and why.
 
-## 5. Afterwards
+## 5. When the e2e suite fails
+
+Run `auto-qa triage <manifest.json>`, then read the `triage.md` it writes and
+the evidence it lists. For each test, use the error, the commits and the app
+diff since the base branch to decide:
+
+- **Regression** (the app broke): report it with the evidence and fix the app.
+  Never touch the spec.
+- **Drift** (an intended UI change broke a locator): fix only locators, waits
+  or navigation, then run `auto-qa guard` and the suite again. Guard fails if
+  any line holding an assertion changed.
+- **Flaky** (failed, then passed on a retry): rerun once. If it is still flaky,
+  report it. Never loosen a timeout or assertion to hide it.
+
+State the verdict and its evidence in your report or PR. Only a human sets
+`AUTO_QA_ALLOW_ASSERTION_CHANGES=1`, when they mean to change behavior.
+
+## 6. Afterwards
 
 - Delete the spec. Move it into the project's e2e dir (`e2e/` unless one
   already exists) only when the user explicitly asks; auto-qa being installed

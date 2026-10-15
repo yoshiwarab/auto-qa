@@ -1,0 +1,67 @@
+# auto-qa e2e suite on pull requests. Copy to .github/workflows/e2e.yml and
+# replace the two REPLACE placeholders. If your playwright.config sets baseURL,
+# it must equal APP_URL (or read process.env.PLAYWRIGHT_TEST_BASE_URL).
+name: e2e
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      APP_URL: http://localhost:3000 # REPLACE with the URL your app serves.
+      BASE: origin/${{ github.base_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # triage and guard diff against the base branch
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium's system libraries
+        run: npx --no playwright install-deps chromium
+      - name: Start the app
+        # REPLACE `npm run dev` with your command; it must keep serving APP_URL.
+        run: |
+          npm run dev > app.log 2>&1 &
+          for _ in $(seq 60); do curl -sf "$APP_URL" > /dev/null && exit 0; sleep 1; done
+          cat app.log
+          exit 1
+      - name: Run the e2e suite
+        id: e2e
+        run: npx --no auto-qa run --out auto-qa-runs --base-url "$APP_URL"
+      - name: Triage failures
+        if: failure() && steps.e2e.outcome == 'failure'
+        run: |
+          for manifest in auto-qa-runs/*/manifest.json; do
+            npx --no auto-qa triage "$manifest" --base "$BASE"
+            cat "$(dirname "$manifest")/triage.md" >> "$GITHUB_STEP_SUMMARY"
+          done
+      # Opt-in, off by default: ask an agent CLI for a verdict on the bundle.
+      # Uncomment only after you choose a CLI and add its credentials as a
+      # repository secret yourself.
+      # - name: Agent verdict
+      #   if: failure() && steps.e2e.outcome == 'failure'
+      #   env:
+      #     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      #   run: |
+      #     npm install -g @anthropic-ai/claude-code
+      #     for bundle in auto-qa-runs/*/triage.md; do
+      #       claude -p "Classify each failure in this auto-qa triage bundle as regression, drift or flaky, citing its evidence. Do not edit files." < "$bundle" >> "$GITHUB_STEP_SUMMARY"
+      #     done
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-qa-runs
+          path: auto-qa-runs
+          if-no-files-found: ignore
+      - name: Check that specs kept their assertions
+        if: always()
+        run: npx --no auto-qa guard --base "$BASE"

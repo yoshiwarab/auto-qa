@@ -1,0 +1,37 @@
+# Nightly @prod-safe tests against production. Copy to
+# .github/workflows/prod-smoke.yml and add a PROD_URL repository secret. If your
+# playwright.config sets baseURL, it must read
+# process.env.PLAYWRIGHT_TEST_BASE_URL, or auto-qa refuses the run.
+name: prod smoke
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium's system libraries
+        run: npx --no playwright install-deps chromium
+      - name: Run @prod-safe tests against production
+        env:
+          PROD_URL: ${{ secrets.PROD_URL }}
+        run: npx --no auto-qa run --out auto-qa-runs --base-url "$PROD_URL" --allow-remote
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-qa-prod-smoke
+          path: auto-qa-runs
+          if-no-files-found: ignore

@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -8,6 +9,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:http";
@@ -17,6 +19,8 @@ import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, onTestFinished, test } from "vitest";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
 
 const app = fileURLToPath(new URL("app/", import.meta.url));
 const cli = fileURLToPath(new URL("../dist/src/cli.js", import.meta.url));
@@ -403,3 +407,180 @@ test("cleanup kills orphaned runs but spares live runs, unowned processes and ev
   expect(existsSync(evidence)).toBe(true);
   expect(existsSync(lookalike)).toBe(true);
 });
+
+test("triage and guard tell regressions, healed locators, changed assertions and flakes apart", async () => {
+  // A repo that keeps an e2e suite, with auto-qa and Playwright installed.
+  const repo = mkdtempSync(join(tmpdir(), "qa-repo-"));
+  onTestFinished(() => rmSync(repo, { recursive: true, force: true }));
+  const write = (path: string, text: string) => {
+    mkdirSync(dirname(join(repo, path)), { recursive: true });
+    writeFileSync(join(repo, path), text);
+  };
+  const edit = (path: string, from: string, to: string) =>
+    write(path, readFileSync(join(repo, path), "utf8").replace(from, to));
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+  mkdirSync(join(repo, "node_modules/.bin"), { recursive: true });
+  symlinkSync(
+    join(root, "node_modules/@playwright"),
+    join(repo, "node_modules/@playwright")
+  );
+  symlinkSync(root, join(repo, "node_modules/auto-qa"));
+  chmodSync(cli, 0o755); // As npm does for an installed bin.
+  symlinkSync(cli, join(repo, "node_modules/.bin/auto-qa"));
+  write("package.json", '{ "name": "shop", "private": true }\n');
+  write(".gitignore", "node_modules\n.auto-qa\n");
+  write(
+    "playwright.config.ts",
+    `export default { testDir: "e2e", timeout: 10_000, expect: { timeout: 2_000 },
+  use: { screenshot: "on", actionTimeout: 2_000 } };\n`
+  );
+  write(
+    "app/index.html",
+    `<button onclick="document.querySelector('output').value = 'Saved'">Save</button>
+<output></output>\n`
+  );
+  write(
+    "e2e/save.spec.ts",
+    `import { expect, test } from "@playwright/test";
+
+test("saving shows a confirmation", async ({ page }) => {
+  await page.goto("/");
+  const save = page.getByRole("button", { name: "Save" });
+  await save.click();
+  await expect(page.getByRole("status")).toHaveText("Saved");
+});
+`
+  );
+  const app = createServer((_, response) =>
+    response.end(readFileSync(join(repo, "app/index.html")))
+  );
+  await once(app.listen(0, "127.0.0.1"), "listening");
+  onTestFinished(() => void app.close());
+  const url = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+  git("init", "-q");
+  git(
+    "-c",
+    "user.name=QA",
+    "-c",
+    "user.email=qa@example.invalid",
+    "commit",
+    "-qam",
+    "x",
+    "--allow-empty"
+  );
+  git("add", ".");
+  git(
+    "-c",
+    "user.name=QA",
+    "-c",
+    "user.email=qa@example.invalid",
+    "commit",
+    "-qm",
+    "Baseline"
+  );
+  const baseline = git("rev-parse", "HEAD");
+  const commit = (message: string) =>
+    git(
+      "-c",
+      "user.name=QA",
+      "-c",
+      "user.email=qa@example.invalid",
+      "commit",
+      "-qam",
+      message
+    );
+  const suite = () => autoQaIn(repo, "run", "--base-url", url).exited;
+  expect((await suite()).code).toBe(0);
+
+  // Regression: the app renamed its button; the bundle shows the app diff and
+  // the failure's evidence.
+  edit("app/index.html", ">Save<", ">Store<");
+  commit("Rename Save to Store");
+  const failed = await suite();
+  expect(failed.code).toBe(1);
+  const bundled = await autoQaIn(repo, "triage", manifestOf(failed.output).path)
+    .exited;
+  expect(bundled.code).toBe(0);
+  const bundle = readFileSync(
+    /auto-qa: triage (\S+)/.exec(bundled.output)![1]!,
+    "utf8"
+  );
+  expect(bundle).toContain(
+    "## failed: saving shows a confirmation (e2e/save.spec.ts)"
+  );
+  expect(bundle).toContain("app/index.html");
+  expect(bundle).toContain("Rename Save to Store");
+  expect(bundle).toMatch(/^-<button.*>Save<\/button>$/m);
+  expect(bundle).toMatch(/^\+<button.*>Store<\/button>$/m);
+  const evidence = [...bundle.matchAll(/^- ([\w-]+): (\/\S+)$/gm)];
+  expect(evidence.map((m) => m[1])).toEqual(
+    expect.arrayContaining(["screenshot", "trace", "error-context"])
+  );
+  for (const [, , path] of evidence) expect(existsSync(path!)).toBe(true);
+
+  // The example pre-push hook catches the same failure and writes a bundle.
+  const hook = spawn("sh", [join(root, "examples/pre-push")], {
+    cwd: repo,
+    env: { ...process.env, AUTO_QA_BASE_URL: url },
+  });
+  let hookOutput = "";
+  hook.stdout.on("data", (chunk) => (hookOutput += chunk));
+  hook.stderr.on("data", (chunk) => (hookOutput += chunk));
+  const [hookCode] = await once(hook, "close");
+  expect(hookCode, hookOutput).toBe(1);
+  expect(existsSync(/auto-qa: triage (\S+)/.exec(hookOutput)![1]!)).toBe(true);
+
+  // Drift: healing only the locator passes the guard and the suite.
+  edit("e2e/save.spec.ts", 'name: "Save"', 'name: "Store"');
+  const healed = await autoQaIn(repo, "guard", "--base", baseline).exited;
+  expect(healed.code, healed.output).toBe(0);
+  expect((await suite()).code).toBe(0);
+  commit("Heal the Save locator");
+
+  // Changing what a spec checks fails the guard, naming the line, unless a
+  // human says the behavior change is intended.
+  // (The click line changes too, so the assertion isn't first in its hunk.)
+  edit("e2e/save.spec.ts", "await save.click();", "await save.dblclick();");
+  edit("e2e/save.spec.ts", 'toHaveText("Saved")', 'toHaveText("Stored")');
+  const weakened = await autoQaIn(repo, "guard", "--base", baseline).exited;
+  expect(weakened.code).toBe(1);
+  expect(weakened.output).toContain(
+    'e2e/save.spec.ts:7: await expect(page.getByRole("status")).toHaveText("Saved");'
+  );
+  expect(weakened.output).toContain("AUTO_QA_ALLOW_ASSERTION_CHANGES=1");
+  process.env.AUTO_QA_ALLOW_ASSERTION_CHANGES = "1";
+  const allowed = autoQaIn(repo, "guard", "--base", baseline).exited;
+  delete process.env.AUTO_QA_ALLOW_ASSERTION_CHANGES;
+  expect((await allowed).code).toBe(0);
+  git("checkout", "--", "e2e/save.spec.ts");
+
+  // Flaky: a test that fails once and then passes is marked flaky.
+  write(
+    "e2e/flaky.spec.ts",
+    `import { expect, test } from "@playwright/test";
+test("passes on retry", () => expect(test.info().retry).toBe(1));
+`
+  );
+  const flaky = await autoQaIn(
+    repo,
+    "run",
+    "e2e/flaky.spec.ts",
+    "--retries=1",
+    "--base-url",
+    url
+  ).exited;
+  expect(flaky.code).toBe(0);
+  const flakyBundle = await autoQaIn(
+    repo,
+    "triage",
+    manifestOf(flaky.output).path
+  ).exited;
+  const flakyText = readFileSync(
+    /auto-qa: triage (\S+)/.exec(flakyBundle.output)![1]!,
+    "utf8"
+  );
+  expect(flakyText).toContain("## flaky: passes on retry (e2e/flaky.spec.ts)");
+  expect(flakyText).toContain("### Attempt 1: failed");
+  expect(flakyText).toContain("### Attempt 2: passed");
+}, 120_000);

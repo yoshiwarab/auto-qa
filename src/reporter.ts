@@ -10,18 +10,20 @@ import type {
   TestResult,
 } from "@playwright/test/reporter";
 
-type Attempt = {
+export type Test = {
+  title: string;
+  file: string;
   status: string;
-  error: string | null;
-  attachments: { name: string; path: string }[];
+  attempts: {
+    status: string;
+    error: string | null;
+    attachments: { name: string; path: string }[];
+  }[];
 };
 
 // Loaded by `playwright test` itself; checks projects and writes the manifest.
 export default class ManifestReporter implements Reporter {
-  private tests = new Map<
-    string,
-    { title: string; file: string; status: string; attempts: Attempt[] }
-  >();
+  private tests = new Map<string, Test>();
 
   // Runs before any test. Playwright ignores errors thrown by reporters, so
   // every failure here, including an unparsable URL, exits the run instead.
