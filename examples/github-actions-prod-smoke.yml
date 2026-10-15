@@ -1,7 +1,8 @@
 # Nightly @prod-safe tests against production. Copy to
-# .github/workflows/prod-smoke.yml and add a PROD_URL repository secret. If your
-# playwright.config sets baseURL, it must read
-# process.env.PLAYWRIGHT_TEST_BASE_URL, or auto-qa refuses the run.
+# .github/workflows/prod-smoke.yml and add a PROD_URL repository secret. Your
+# playwright.config must set
+# `baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL ?? "<local dev URL>"` (or no
+# baseURL), or auto-qa refuses the run.
 name: prod smoke
 
 on:

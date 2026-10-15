@@ -115,6 +115,14 @@ onlyBuiltDependencies:
   - "auto-qa@git+ssh://git@github.com/yoshiwarab/auto-qa.git#<commit>"
 ```
 
+auto-qa refuses a config whose `baseURL` differs from `--base-url`. Make your
+Playwright config read the URL auto-qa passes, so the same config serves local,
+CI and prod smoke runs:
+
+```ts
+baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL ?? "<local dev URL>",
+```
+
 ## Wiring it into a project
 
 [`examples/`](examples/) has copyable starting points. Nothing installs itself.
