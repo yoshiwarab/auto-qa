@@ -10,6 +10,10 @@ It needs nothing installed in the project:
 npx github:yoshiwarab/auto-qa run ...
 ```
 
+The first run takes about 30 seconds. npm clones and builds auto-qa, and
+Playwright downloads Chromium. Later runs spend about 6 seconds in npx
+re-resolving the git branch before the tests start.
+
 ## Commands
 
 ```bash
@@ -71,7 +75,21 @@ To pin a version, add it as a git dev dependency:
 npm install -D github:yoshiwarab/auto-qa
 ```
 
-Its `prepare` script builds `dist/` during install.
+Its `prepare` script builds `dist/` during install. pnpm blocks that for git
+dependencies until you allow it in `pnpm-workspace.yaml`. On pnpm 11:
+
+```yaml
+allowBuilds:
+  "auto-qa@git+ssh://git@github.com/yoshiwarab/auto-qa.git": true
+```
+
+pnpm 10 (10.26 and later) accepts only the exact commit that its error message
+prints, so update the entry whenever you update auto-qa:
+
+```yaml
+onlyBuiltDependencies:
+  - "auto-qa@git+ssh://git@github.com/yoshiwarab/auto-qa.git#<commit>"
+```
 
 ## Development
 
