@@ -1,8 +1,8 @@
 # auto-qa
 
 auto-qa runs a project's own Playwright specs, captures evidence for every
-test, and makes sure no browser outlives the run. Linux only (it reads
-`/proc`).
+test, and makes sure no browser outlives the run. It works on Linux and
+macOS, finding processes with `ps`.
 
 ## Commands
 
@@ -11,17 +11,19 @@ auto-qa run [playwright test args...] --base-url <url> [--allow-remote]
 ```
 
 Runs `playwright test` from the project's `@playwright/test`. It records a
-trace, a final screenshot and an accessibility snapshot for every test.
-Evidence goes to `.auto-qa/runs/<id>/`. The `manifest.json` there lists each
-test's title, file, status, error and evidence paths. Playwright and its
+trace for every test, plus a final screenshot and accessibility snapshot of
+any page it used. Evidence goes to `.auto-qa/runs/<id>/`. The `manifest.json`
+there lists each test's title, file, status, error and evidence paths, from its
+final attempt when it was retried. Playwright and its
 browsers run in their own process groups under a private temp dir. They are
 killed when the run ends, including on Ctrl-C or SIGTERM.
 
-A non-local `--base-url` (anything but `localhost` or `127.0.0.1`) requires
-`--allow-remote`. Such a run passes `--grep @prod-safe --no-deps`, so only tests
+Local means `localhost`, `*.localhost`, `127.0.0.1` or `[::1]`. A non-local
+`--base-url` requires `--allow-remote`. Such a run passes `--grep @prod-safe --no-deps`, so only tests
 tagged exactly `@prod-safe` run, with no setup projects. Your own `--grep` is
 replaced, and `--` is rejected. Your config's `webServer` and `globalSetup`
-still run, so keep them safe for production.
+still run, so keep them safe for production. Every project's `baseURL` must be
+local or match `--base-url`; otherwise the run stops before any test starts.
 
 ```bash
 auto-qa cleanup
@@ -29,8 +31,9 @@ auto-qa cleanup
 
 Kills browser and Playwright processes left behind by auto-qa runs whose owner
 has died (for example, one killed with SIGKILL). It also deletes their temp
-profiles. It finds them by the run's temp dir path (`$TMPDIR/auto-qa-*`), never
-by process name. Active runs and `.auto-qa/runs` evidence are left alone.
+profiles. A run's processes are those whose arguments put Chromium's profile
+inside its temp dir (`$TMPDIR/auto-qa-*`), plus the process group of the
+Playwright runner recorded there. Processes are never matched by name. Active runs and `.auto-qa/runs` evidence are left alone.
 
 ## How agents should use it
 

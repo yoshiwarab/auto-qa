@@ -9,10 +9,11 @@ import { fileURLToPath } from "node:url";
 import {
   cleanup,
   kill,
-  ownerAlive,
-  ownerToken,
+  processId,
+  recordRunner,
   runTmpDir,
 } from "./processes.js";
+import { isLocal } from "./reporter.js";
 
 const usage = `usage: auto-qa run [playwright test args...] --base-url <url> [--allow-remote]
        auto-qa cleanup`;
@@ -29,7 +30,7 @@ const run = async (args: string[]) => {
   if (playwrightArgs.includes("--")) throw new Error("`--` is not supported");
   if (baseUrl === undefined)
     throw new Error(`--base-url is required\n${usage}`);
-  const local = ["localhost", "127.0.0.1"].includes(new URL(baseUrl).hostname);
+  const local = isLocal(baseUrl);
   if (!local && !allowRemote) {
     throw new Error(
       `${baseUrl} is not local; pass --allow-remote to run only @prod-safe tests`
@@ -43,8 +44,8 @@ const run = async (args: string[]) => {
     ".auto-qa/runs",
     `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`
   );
-  const token = ownerToken();
-  mkdirSync(runTmpDir(token), { recursive: true });
+  const owner = processId(process.pid);
+  mkdirSync(runTmpDir(owner), { recursive: true });
   const child = spawn(
     process.execPath,
     [
@@ -61,12 +62,14 @@ const run = async (args: string[]) => {
       stdio: "inherit",
       env: {
         ...process.env,
-        TMPDIR: runTmpDir(token),
+        TMPDIR: runTmpDir(owner),
         AUTO_QA_BASE_URL: baseUrl,
         AUTO_QA_RUN_DIR: runDir,
       },
     }
   );
+
+  recordRunner(owner, child.pid!);
 
   // Ask Playwright to stop gracefully so it still writes the manifest, but
   // never wait on it for more than a few seconds.
@@ -82,14 +85,14 @@ const run = async (args: string[]) => {
     ];
     return code ?? 128 + constants.signals[signal];
   } finally {
-    await cleanup((owner) => owner === token);
+    await cleanup(owner);
   }
 };
 
 const main = async ([command, ...args]: string[]) => {
   if (command === "run") return run(args);
   if (command !== "cleanup") throw new Error(usage);
-  const swept = await cleanup((owner) => !ownerAlive(owner));
+  const swept = await cleanup();
   console.log(
     `auto-qa: killed ${swept.processes} leftover processes, removed ${swept.dirs} temp dirs`
   );

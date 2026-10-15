@@ -1,78 +1,95 @@
-import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-// Each run owns a private TMPDIR named after its owner process. Playwright's
-// runner and workers inherit it as TMPDIR. Chromium overwrites its environ and
-// joins its argv with spaces, but its group leader keeps --user-data-dir under
-// that TMPDIR. Those two exact markers are the only things we kill by.
+// Each run owns a temp dir named after its owner process (pid + start time).
+// Two markers, both visible to `ps` on Linux and macOS, prove ownership:
+// Chromium's --user-data-dir lies inside that dir, and the dir's `runner` file
+// names the detached Playwright runner whose process group holds the workers.
 const ownedPrefix = () => join(tmpdir(), "auto-qa-");
 
-const read = (path: string) => {
+const readFile = (path: string) => {
   try {
-    return readFileSync(path, "latin1");
+    return readFileSync(path, "utf8");
   } catch {
     return "";
   }
 };
 
-export const ownerToken = (pid = process.pid) => {
-  const stat = read(`/proc/${pid}/stat`);
-  return `${pid}-${stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]}`;
-};
+const processes = () =>
+  execFileSync(
+    "ps",
+    "-A -ww -o pid= -o pgid= -o stat= -o lstart= -o args=".split(" "),
+    { encoding: "utf8", env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }
+  )
+    .split("\n")
+    .flatMap((line) => {
+      const [, pid, pgid, stat, start, args] =
+        /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+\s+\S+\s+\d+\s+\S+\s+\d+)\s+(.*)$/.exec(
+          line
+        ) ?? [];
+      if (pid === undefined || stat!.startsWith("Z")) return [];
+      const id = `${pid}-${start!.replace(/\W/g, "")}`;
+      return [{ pid: +pid, pgid: +pgid!, id, args: ` ${args}` }];
+    });
 
-export const ownerAlive = (token: string) =>
-  ownerToken(Number(token.split("-")[0])) === token;
+// The process's identity (pid + start time), which survives pid reuse.
+export const processId = (pid: number) =>
+  processes().find((p) => p.pid === pid)?.id ?? "";
 
-export const runTmpDir = (token: string) => ownedPrefix() + token;
+export const runTmpDir = (owner: string) => ownedPrefix() + owner;
 
-// The owner token after `key` + an owned temp dir path, if `text` has one.
+export const recordRunner = (owner: string, pid: number) =>
+  writeFileSync(join(runTmpDir(owner), "runner"), processId(pid));
+
 const ownedToken = (text: string, key = "") =>
-  text.split(key + ownedPrefix())[1]?.match(/^\d+-\d+(?=$|\/|\0)/)?.[0];
+  text.split(key + ownedPrefix())[1]?.match(/^\d+-\w+(?=$|\/)/)?.[0];
 
 export const kill = (target: number, signal: NodeJS.Signals) => {
   try {
     process.kill(target, signal);
   } catch {
-    // Already gone, or not a group leader.
+    // Already gone.
   }
 };
 
-const ownedPids = (matches: (token: string) => boolean) =>
-  readdirSync("/proc").filter((pid) => {
-    if (!/^\d+$/.test(pid) || Number(pid) === process.pid) return false;
-    const token =
-      ownedToken(`\0${read(`/proc/${pid}/environ`)}`, "\0TMPDIR=") ??
-      ownedToken(
-        ` ${read(`/proc/${pid}/cmdline`)}`.replaceAll("\0", " "),
-        " --user-data-dir="
-      );
-    return token !== undefined && matches(token);
-  });
+// The temp dirs of `owner`, or of every dead owner, and the processes they own
+// (negative for a process group whose leader is owned).
+const owned = (owner?: string) => {
+  const all = processes();
+  const live = new Set(all.map((p) => p.id));
+  const matches = (token?: string) =>
+    token !== undefined &&
+    (owner !== undefined ? token === owner : !live.has(token));
+  const dirs = readdirSync(tmpdir())
+    .map((name) => join(tmpdir(), name))
+    .filter((dir) => matches(ownedToken(dir)));
+  const runners = new Set(dirs.map((dir) => readFile(join(dir, "runner"))));
+  const targets = all
+    .filter(
+      (p) =>
+        runners.has(p.id) || matches(ownedToken(p.args, " --user-data-dir="))
+    )
+    .map((p) => (p.pid === p.pgid ? -p.pid : p.pid));
+  return { dirs, targets };
+};
 
-// Kills owned processes and the process groups they lead (Chromium's renderers
-// live in its group), then deletes the matching temp dirs and their profiles.
-export const cleanup = async (matches: (token: string) => boolean) => {
-  const killed = new Set<string>();
+export const cleanup = async (owner?: string) => {
+  const killed = new Set<number>();
   for (let attempt = 0; ; attempt++) {
-    const pids = ownedPids(matches);
-    if (pids.length === 0) break;
+    const { dirs, targets } = owned(owner);
+    if (targets.length === 0) {
+      for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+      return { processes: killed.size, dirs: dirs.length };
+    }
     if (attempt === 50)
-      throw new Error(`processes survived SIGKILL: ${pids.join(" ")}`);
-    for (const pid of pids) {
-      killed.add(pid);
-      kill(-pid, "SIGKILL");
-      kill(+pid, "SIGKILL");
+      throw new Error(`processes survived SIGKILL: ${targets.join(" ")}`);
+    for (const target of targets) {
+      killed.add(target);
+      kill(target, "SIGKILL");
     }
     await sleep(100);
   }
-  const dirs = readdirSync(tmpdir())
-    .map((name) => join(tmpdir(), name))
-    .filter((dir) => {
-      const token = ownedToken(dir);
-      return token !== undefined && matches(token);
-    });
-  for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
-  return { processes: killed.size, dirs: dirs.length };
 };
