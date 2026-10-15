@@ -25,8 +25,8 @@ ignored `.worktrees/`, and shared runtime scripts in ignored
 
 The machine needs Git, FNM with Node 22, pnpm, Babashka, Herdr 0.7.4 or newer,
 and an authenticated Codex CLI. The launcher prefers the local fork at
-`/home/dev/src/swarm-forge`; when it is absent, it downloads the configured
-`herdr-runtime` branch from `yoshiwarab/swarm-forge`.
+`/home/dev/src/swarm-forge`. Its fallback is configurable, but it must point at
+a published archive that contains the Herdr runtime.
 
 ## Start
 
@@ -88,10 +88,15 @@ Stopping preserves role worktrees and durable handoff state. Do not use
 `herdr session stop` merely to detach because that terminates the managed pane
 processes.
 
+`./close-swarm` provides the same explicit stop path when package scripts are
+unavailable.
+
 ## Local overrides
 
 - `SWARMFORGE_SCRIPTS_SOURCE` changes the local fork directory.
+- `SWARMFORGE_SOURCE_DIR` is the preferred name for the same local override.
 - `SWARMFORGE_SCRIPTS_BRANCH` changes the downloaded branch.
 - `SWARMFORGE_SCRIPTS_URL` changes the fallback archive.
 - `SWARMFORGE_ALLOW_DIRTY=1` deliberately bypasses the clean-baseline guard.
+- `SWARMFORGE_RESTART=1` deliberately replaces a recorded runtime.
 - `SWARMFORGE_TERM` overrides the Ghostty compatibility terminal type.

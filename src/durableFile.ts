@@ -2,7 +2,7 @@ import { open } from "node:fs/promises";
 
 export const writeFileDurably = async (
   path: string,
-  contents: string,
+  contents: string | Uint8Array,
 ): Promise<void> => {
   const file = await open(path, "w");
   try {

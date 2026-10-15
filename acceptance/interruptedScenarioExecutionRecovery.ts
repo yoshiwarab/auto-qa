@@ -172,6 +172,7 @@ const startExecutionProcess = (
 };
 
 const recoveryRuntime = (world: World): ScenarioRuntime => ({
+  reconcile: () => Effect.void,
   execute: (attempt) =>
     Effect.sync(() => {
       world.runtimeCalls.push({
@@ -311,7 +312,7 @@ const handlers: readonly StepHandler<World>[] = [
                 turnOwnerFactory: () => secondTurnOwner,
                 scenarioRuntime: recoveryRuntime(world),
                 runReporter: {
-                  writePassingReport: () =>
+                  writeReport: () =>
                     Effect.sync(() => {
                       world.reportCount += 1;
                     }),

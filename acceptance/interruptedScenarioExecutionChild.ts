@@ -20,6 +20,7 @@ if (
 }
 
 const heldRuntime: ScenarioRuntime = {
+  reconcile: () => Effect.void,
   execute: (attempt) =>
     Effect.async(() => {
       process.send?.({
@@ -41,7 +42,7 @@ await Effect.runPromise(
         databasePath,
         changeInspector: { inspect: () => Effect.succeed([]) },
         scenarioRuntime: heldRuntime,
-        runReporter: { writePassingReport: () => Effect.void },
+        runReporter: { writeReport: () => Effect.void },
       });
       return yield* engine.dispatch(RunId("interrupted-execution"), {
         type: "submitJob",

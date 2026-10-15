@@ -1,23 +1,17 @@
 import { execFile } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
+import { Effect } from "effect";
 import {
-  afterAll,
-  beforeAll,
-  describe,
-  expect,
-  test,
-} from "vitest";
+  createWorkflowEngine,
+  makeDeterministicScenarioRuntime,
+  RunId,
+} from "../src/index.js";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -37,25 +31,21 @@ const makeTemporaryGitWorktree = async (): Promise<string> => {
   await execFileAsync(
     "git",
     ["config", "user.email", "auto-qa@example.invalid"],
-    { cwd: worktree },
+    { cwd: worktree }
   );
-  await execFileAsync(
-    "git",
-    ["config", "user.name", "Auto QA Harness"],
-    { cwd: worktree },
-  );
+  await execFileAsync("git", ["config", "user.name", "Auto QA Harness"], {
+    cwd: worktree,
+  });
   await mkdir(join(worktree, "src"), { recursive: true });
   await writeFile(
     join(worktree, "src", "dashboard.tsx"),
     "export const dashboard = 'baseline';\n",
-    "utf8",
+    "utf8"
   );
   await execFileAsync("git", ["add", "."], { cwd: worktree });
-  await execFileAsync(
-    "git",
-    ["commit", "-m", "Committed baseline"],
-    { cwd: worktree },
-  );
+  await execFileAsync("git", ["commit", "-m", "Committed baseline"], {
+    cwd: worktree,
+  });
 
   return worktree;
 };
@@ -74,18 +64,13 @@ type RunCliOptions = {
 const runCli = async (
   worktree: string,
   args: readonly string[],
-  options: RunCliOptions = {},
+  options: RunCliOptions = {}
 ): Promise<ProcessResult> => {
   try {
-    const result = await execFileAsync(
-      process.execPath,
-      [cliPath, ...args],
-      {
-        cwd:
-          options.currentDirectory ?? join(worktree, "src"),
-        env: options.environment,
-      },
-    );
+    const result = await execFileAsync(process.execPath, [cliPath, ...args], {
+      cwd: options.currentDirectory ?? join(worktree, "src"),
+      env: options.environment,
+    });
     return {
       exitCode: 0,
       stdout: result.stdout,
@@ -116,7 +101,7 @@ const parseOnlyJsonLine = (stdout: string): unknown => {
 const pathExists = (path: string): Promise<boolean> =>
   access(path).then(
     () => true,
-    () => false,
+    () => false
   );
 
 beforeAll(async () => {
@@ -127,7 +112,7 @@ beforeAll(async () => {
       "--project",
       join(projectRoot, "tsconfig.build.json"),
     ],
-    { cwd: projectRoot },
+    { cwd: projectRoot }
   );
 
   targetApplication = createServer((_request, response) => {
@@ -152,26 +137,118 @@ afterAll(async () => {
     });
   });
   await Promise.all(
-    temporaryDirectories.map((directory) =>
-      rm(directory, { recursive: true }),
-    ),
+    temporaryDirectories.map((directory) => rm(directory, { recursive: true }))
   );
 });
 
 describe("CLI durable generate-plan handoff", () => {
+  test("status retains classifications and incomplete coverage alongside confirmed defects", async () => {
+    const worktree = await makeTemporaryGitWorktree();
+    const runId = RunId("cli-incomplete-coverage");
+    await mkdir(join(worktree, ".auto-qa"));
+    const review = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const engine = yield* createWorkflowEngine({
+            databasePath: join(worktree, ".auto-qa", "state.db"),
+            changeInspector: { inspect: () => Effect.succeed([]) },
+            scenarioRuntime: makeDeterministicScenarioRuntime("failed"),
+          });
+          const start = yield* engine.dispatch(runId, {
+            type: "start",
+            baseUrl,
+          });
+          const result = yield* engine.dispatch(runId, {
+            type: "submitJob",
+            jobId: start.pendingJob.id,
+            payload: {
+              schemaVersion: 1,
+              scenarios: [
+                {
+                  id: "broken",
+                  goal: "Verify the entire account flow",
+                  preconditions: [],
+                  mutates: false,
+                  script: "async () => {}",
+                },
+              ],
+            },
+          });
+          if (result.phase !== "awaitingAgent")
+            throw new Error("Expected review");
+          return result.pendingJob;
+        })
+      )
+    );
+    const classifications = review.payload.findings.map((finding) => ({
+      findingId: finding.id,
+      classification: "app-defect",
+      reasoning: "The broken control prevents checking the rest of the flow.",
+      coverageComplete: false,
+      reviewedEvidence: ["final.png", "final.aria.yaml"],
+    }));
+    const file = join(worktree, "review.json");
+    await writeFile(
+      file,
+      JSON.stringify({
+        schemaVersion: 1,
+        resolution: "report-only",
+        classifications,
+      })
+    );
+    const submitted = await runCli(worktree, [
+      "submit",
+      runId,
+      "--job-id",
+      review.id,
+      "--file",
+      file,
+    ]);
+    expect(submitted.exitCode, submitted.stdout).toBe(0);
+    const status = await runCli(worktree, ["status", runId]);
+    expect(status.exitCode, status.stdout).toBe(0);
+    expect(parseOnlyJsonLine(status.stdout)).toMatchObject({
+      ok: true,
+      result: {
+        phase: "completed",
+        outcome: "defects-found",
+        coverageIncomplete: true,
+        incompleteScenarios: ["broken"],
+        classifications,
+        attempts: [{ scenarioId: "broken", status: "failed" }],
+      },
+    });
+  });
+
+  test("cleanup is an idempotent worktree command without a Run or Target Application", async () => {
+    const worktree = await makeTemporaryGitWorktree();
+    const requestsBefore = targetApplicationRequestCount;
+    for (let invocation = 0; invocation < 2; invocation += 1) {
+      const cleaned = await runCli(worktree, ["cleanup"]);
+      expect(cleaned, cleaned.stdout).toMatchObject({
+        exitCode: 0,
+        stderr: "",
+      });
+      expect(parseOnlyJsonLine(cleaned.stdout)).toMatchObject({
+        schemaVersion: 1,
+        ok: true,
+        result: { status: "clean" },
+      });
+    }
+    expect(targetApplicationRequestCount).toBe(requestsBefore);
+    const invalid = await runCli(worktree, ["cleanup", "unexpected-run-id"]);
+    expect(invalid.exitCode).toBe(2);
+  });
+
   test("start, job, and status share durable versioned state", async () => {
     const worktree = await makeTemporaryGitWorktree();
     await writeFile(
       join(worktree, "src", "dashboard.tsx"),
       "export const dashboard = 'modified';\n",
-      "utf8",
+      "utf8"
     );
 
-    const start = await runCli(worktree, [
-      "start",
-      "--base-url",
-      baseUrl.href,
-    ]);
+    const start = await runCli(worktree, ["start", "--base-url", baseUrl.href]);
     const startEnvelope = parseOnlyJsonLine(start.stdout) as {
       readonly schemaVersion: number;
       readonly correlationId: string;
@@ -182,10 +259,7 @@ describe("CLI durable generate-plan handoff", () => {
         readonly job: unknown;
       };
     };
-    const job = await runCli(worktree, [
-      "job",
-      startEnvelope.result.runId,
-    ]);
+    const job = await runCli(worktree, ["job", startEnvelope.result.runId]);
     const status = await runCli(worktree, [
       "status",
       startEnvelope.result.runId,
@@ -213,11 +287,7 @@ describe("CLI durable generate-plan handoff", () => {
       expect.objectContaining({ exitCode: 0, stderr: "" }),
       expect.objectContaining({ exitCode: 0, stderr: "" }),
     ]);
-    for (const envelope of [
-      startEnvelope,
-      jobEnvelope,
-      statusEnvelope,
-    ]) {
+    for (const envelope of [startEnvelope, jobEnvelope, statusEnvelope]) {
       expect(envelope).toMatchObject({
         schemaVersion: 1,
         ok: true,
@@ -225,9 +295,7 @@ describe("CLI durable generate-plan handoff", () => {
       });
       expect(envelope.correlationId.length).toBeGreaterThan(0);
     }
-    expect(jobEnvelope.result.job).toEqual(
-      startEnvelope.result.job,
-    );
+    expect(jobEnvelope.result.job).toEqual(startEnvelope.result.job);
     expect(startEnvelope.result.job).toMatchObject({
       schemaVersion: 1,
       type: "generate-plan",
@@ -267,10 +335,7 @@ describe("CLI durable generate-plan handoff", () => {
 
   test("read-only failures preserve domain codes without creating state", async () => {
     const worktree = await makeTemporaryGitWorktree();
-    const result = await runCli(worktree, [
-      "status",
-      "missing-run",
-    ]);
+    const result = await runCli(worktree, ["status", "missing-run"]);
     const envelope = parseOnlyJsonLine(result.stdout);
 
     expect(result).toMatchObject({
@@ -286,14 +351,12 @@ describe("CLI durable generate-plan handoff", () => {
         message: "Auto-QA failed during open Run Store",
       },
     });
-    await expect(
-      pathExists(join(worktree, ".auto-qa")),
-    ).resolves.toBe(false);
+    await expect(pathExists(join(worktree, ".auto-qa"))).resolves.toBe(false);
   });
 
   test("start outside Git fails before creating durable state", async () => {
     const directory = await mkdtemp(
-      join(projectRoot, "tmp", "non-git-directory-"),
+      join(projectRoot, "tmp", "non-git-directory-")
     );
     temporaryDirectories.push(directory);
     targetApplicationRequestCount = 0;
@@ -306,7 +369,7 @@ describe("CLI durable generate-plan handoff", () => {
           ...process.env,
           GIT_CEILING_DIRECTORIES: projectRoot,
         },
-      },
+      }
     );
 
     expect(result).toMatchObject({ exitCode: 1, stderr: "" });
@@ -319,9 +382,7 @@ describe("CLI durable generate-plan handoff", () => {
         message: "Auto-QA must run inside a Git worktree",
       },
     });
-    await expect(
-      pathExists(join(directory, ".auto-qa")),
-    ).resolves.toBe(false);
+    await expect(pathExists(join(directory, ".auto-qa"))).resolves.toBe(false);
     expect(targetApplicationRequestCount).toBe(0);
   });
 
@@ -344,7 +405,7 @@ describe("CLI durable generate-plan handoff", () => {
         ["start", "--base-url", baseUrl.href],
         {
           environment: { ...process.env, ...environment },
-        },
+        }
       );
 
       expect(result).toMatchObject({ exitCode: 1, stderr: "" });
@@ -357,20 +418,14 @@ describe("CLI durable generate-plan handoff", () => {
           message: "Auto-QA command failed",
         },
       });
-      await expect(
-        pathExists(join(worktree, ".auto-qa")),
-      ).resolves.toBe(false);
+      await expect(pathExists(join(worktree, ".auto-qa"))).resolves.toBe(false);
       expect(targetApplicationRequestCount).toBe(0);
-    },
+    }
   );
 
   test("a second start identifies the active Run without replacing it", async () => {
     const worktree = await makeTemporaryGitWorktree();
-    const first = await runCli(worktree, [
-      "start",
-      "--base-url",
-      baseUrl.href,
-    ]);
+    const first = await runCli(worktree, ["start", "--base-url", baseUrl.href]);
     const firstEnvelope = parseOnlyJsonLine(first.stdout) as {
       readonly result: { readonly runId: string };
     };
@@ -412,11 +467,7 @@ describe("CLI durable generate-plan handoff", () => {
 
   test("abandon releases the worktree for a new Run", async () => {
     const worktree = await makeTemporaryGitWorktree();
-    const first = await runCli(worktree, [
-      "start",
-      "--base-url",
-      baseUrl.href,
-    ]);
+    const first = await runCli(worktree, ["start", "--base-url", baseUrl.href]);
     const firstEnvelope = parseOnlyJsonLine(first.stdout) as {
       readonly result: { readonly runId: string };
     };
@@ -435,16 +486,9 @@ describe("CLI durable generate-plan handoff", () => {
       firstEnvelope.result.runId,
     ]);
     const statusEnvelope = parseOnlyJsonLine(status.stdout);
-    const job = await runCli(worktree, [
-      "job",
-      firstEnvelope.result.runId,
-    ]);
+    const job = await runCli(worktree, ["job", firstEnvelope.result.runId]);
     const jobEnvelope = parseOnlyJsonLine(job.stdout);
-    const next = await runCli(worktree, [
-      "start",
-      "--base-url",
-      baseUrl.href,
-    ]);
+    const next = await runCli(worktree, ["start", "--base-url", baseUrl.href]);
     const nextEnvelope = parseOnlyJsonLine(next.stdout) as {
       readonly result: {
         readonly runId: string;
@@ -455,11 +499,7 @@ describe("CLI durable generate-plan handoff", () => {
     for (const result of [abandon, status, job, next]) {
       expect(result).toMatchObject({ exitCode: 0, stderr: "" });
     }
-    for (const envelope of [
-      abandonEnvelope,
-      statusEnvelope,
-      nextEnvelope,
-    ]) {
+    for (const envelope of [abandonEnvelope, statusEnvelope, nextEnvelope]) {
       expect(envelope).toMatchObject({
         schemaVersion: 1,
         correlationId: expect.any(String),
@@ -478,18 +518,14 @@ describe("CLI durable generate-plan handoff", () => {
     expect(nextEnvelope.result).toMatchObject({
       phase: "awaitingAgent",
     });
-    expect(nextEnvelope.result.runId).not.toBe(
-      firstEnvelope.result.runId,
-    );
+    expect(nextEnvelope.result.runId).not.toBe(firstEnvelope.result.runId);
   });
 
   test("abandon migrates durable state and keeps terminal history immutable", async () => {
     const worktree = await makeTemporaryGitWorktree();
     const stateDirectory = join(worktree, ".auto-qa");
     await mkdir(stateDirectory, { recursive: true });
-    const database = new DatabaseSync(
-      join(stateDirectory, "state.db"),
-    );
+    const database = new DatabaseSync(join(stateDirectory, "state.db"));
     database.exec(`
       CREATE TABLE runs (
         run_id TEXT PRIMARY KEY,
@@ -538,15 +574,12 @@ describe("CLI durable generate-plan handoff", () => {
     `);
     database
       .prepare(
-        "INSERT INTO runs (run_id, phase, base_url) VALUES ('legacy-run', 'awaitingAgent', ?)",
+        "INSERT INTO runs (run_id, phase, base_url) VALUES ('legacy-run', 'awaitingAgent', ?)"
       )
       .run(baseUrl.href);
     database.close();
 
-    const legacyStatus = await runCli(worktree, [
-      "status",
-      "legacy-run",
-    ]);
+    const legacyStatus = await runCli(worktree, ["status", "legacy-run"]);
     const abandoned = await runCli(worktree, [
       "runs",
       "abandon",
@@ -561,10 +594,7 @@ describe("CLI durable generate-plan handoff", () => {
       "--reason",
       "overwritten",
     ]);
-    const status = await runCli(worktree, [
-      "status",
-      "legacy-run",
-    ]);
+    const status = await runCli(worktree, ["status", "legacy-run"]);
 
     expect(legacyStatus).toMatchObject({ exitCode: 0, stderr: "" });
     expect(parseOnlyJsonLine(legacyStatus.stdout)).toMatchObject({

@@ -32,6 +32,9 @@ const parseCommand = (argv: readonly string[]): CliCommand => {
   program.command("status <run-id>").action((runId: string) => {
     command = { type: "status", runId };
   });
+  program.command("cleanup").action(() => {
+    command = { type: "cleanup" };
+  });
   program
     .command("submit <run-id>")
     .requiredOption("--job-id <job-id>")

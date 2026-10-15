@@ -115,7 +115,7 @@ export const validateGeneratePlan = (
       );
     }
     const id = candidate["id"];
-    if (typeof id !== "string" || id.length === 0) {
+    if (typeof id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(id)) {
       return Either.left(
         new PlanValidationError({
           scenarioId: "<unknown>",

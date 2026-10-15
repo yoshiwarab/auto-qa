@@ -18,10 +18,7 @@ import {
   runCliProcess,
   type ProcessResult,
 } from "./cliProcessHarness.js";
-import {
-  makeQaLab,
-  type QaLabProcess,
-} from "./qaLabHarness.js";
+import { makeQaLab, type QaLabProcess } from "./qaLabHarness.js";
 import {
   exampleValue,
   type FeatureBindings,
@@ -65,10 +62,7 @@ type World = {
   statusEnvelope?: Envelope;
 };
 
-const runGit = (
-  cwd: string,
-  args: readonly string[],
-): Promise<void> =>
+const runGit = (cwd: string, args: readonly string[]): Promise<void> =>
   execFileAsync("git", args, { cwd }).then(() => undefined);
 
 const makeWorld = Effect.gen(function* () {
@@ -76,18 +70,16 @@ const makeWorld = Effect.gen(function* () {
   const parent = join(process.cwd(), "tmp");
   yield* Effect.promise(() => mkdir(parent, { recursive: true }));
   const planDirectory = yield* Effect.acquireRelease(
-    Effect.tryPromise(() =>
-      mkdtemp(join(parent, "acceptance-plan-")),
-    ),
+    Effect.tryPromise(() => mkdtemp(join(parent, "acceptance-plan-"))),
     (directory) =>
-      Effect.tryPromise(() =>
-        rm(directory, { recursive: true }),
-      ).pipe(Effect.orDie),
+      Effect.tryPromise(() => rm(directory, { recursive: true })).pipe(
+        Effect.orDie
+      )
   );
   return yield* Effect.acquireRelease(
     Effect.tryPromise(async () => {
       const worktree = await mkdtemp(
-        join(parent, "acceptance-passing-browser-"),
+        join(parent, "acceptance-passing-browser-")
       );
       await runGit(worktree, ["init"]);
       await runGit(worktree, [
@@ -95,24 +87,16 @@ const makeWorld = Effect.gen(function* () {
         "user.email",
         "auto-qa@example.invalid",
       ]);
-      await runGit(worktree, [
-        "config",
-        "user.name",
-        "Auto QA Harness",
-      ]);
+      await runGit(worktree, ["config", "user.name", "Auto QA Harness"]);
       await writeFile(
         join(worktree, "account.tsx"),
-        "export const heading = 'Baseline';\n",
+        "export const heading = 'Baseline';\n"
       );
       await runGit(worktree, ["add", "."]);
-      await runGit(worktree, [
-        "commit",
-        "-m",
-        "Committed baseline",
-      ]);
+      await runGit(worktree, ["commit", "-m", "Committed baseline"]);
       await writeFile(
         join(worktree, "account.tsx"),
-        "export const heading = 'Account';\n",
+        "export const heading = 'Account';\n"
       );
 
       const world = {
@@ -124,15 +108,15 @@ const makeWorld = Effect.gen(function* () {
       return world;
     }),
     (world) =>
-      Effect.tryPromise(() =>
-        rm(world.worktree, { recursive: true }),
-      ).pipe(Effect.orDie),
+      Effect.tryPromise(() => rm(world.worktree, { recursive: true })).pipe(
+        Effect.orDie
+      )
   );
 });
 
 const runCli = (
   world: World,
-  args: readonly string[],
+  args: readonly string[]
 ): Promise<ProcessResult> =>
   runCliProcess({
     cwd: world.worktree,
@@ -142,7 +126,7 @@ const runCli = (
       PLAYWRIGHT_BROWSERS_PATH: join(
         process.cwd(),
         "tmp",
-        "playwright-browsers",
+        "playwright-browsers"
       ),
     },
   });
@@ -154,18 +138,9 @@ const runId = (world: World): string => {
 };
 
 const ownedBrowserProcesses = async (): Promise<readonly string[]> => {
-  const { stdout } = await execFileAsync("ps", [
-    "-eo",
-    "pid=,args=",
-  ]);
-  const browserRoot = join(
-    process.cwd(),
-    "tmp",
-    "playwright-browsers",
-  );
-  return stdout
-    .split("\n")
-    .filter((line) => line.includes(browserRoot));
+  const { stdout } = await execFileAsync("ps", ["-eo", "pid=,args="]);
+  const browserRoot = join(process.cwd(), "tmp", "playwright-browsers");
+  return stdout.split("\n").filter((line) => line.includes(browserRoot));
 };
 
 const handlers: readonly StepHandler<World>[] = [
@@ -179,10 +154,7 @@ const handlers: readonly StepHandler<World>[] = [
       /^a harness-owned Target Application serves accessible heading <([A-Za-z0-9_]+)> at a harness-supplied Base URL$/,
     run: (world, example, captures) =>
       Effect.tryPromise(async () => {
-        const expectedHeading = exampleValue(
-          example,
-          captures[0],
-        );
+        const expectedHeading = exampleValue(example, captures[0]);
         const browser = await chromium.launch({ headless: true });
         try {
           const page = await browser.newPage();
@@ -193,7 +165,7 @@ const handlers: readonly StepHandler<World>[] = [
                 name: expectedHeading,
                 exact: true,
               })
-              .count(),
+              .count()
           ).toBe(1);
         } finally {
           await browser.close();
@@ -201,8 +173,7 @@ const handlers: readonly StepHandler<World>[] = [
       }),
   },
   {
-    pattern:
-      /^a fresh CLI process starts a Run with that Base URL$/,
+    pattern: /^a fresh CLI process starts a Run with that Base URL$/,
     run: (world) =>
       Effect.tryPromise(async () => {
         world.start = await runCli(world, [
@@ -210,8 +181,7 @@ const handlers: readonly StepHandler<World>[] = [
           "--base-url",
           world.baseUrl.href,
         ]);
-        world.startEnvelope =
-          parseOnlyJsonLine<Envelope>(world.start);
+        world.startEnvelope = parseOnlyJsonLine<Envelope>(world.start);
       }),
   },
   {
@@ -238,11 +208,7 @@ const handlers: readonly StepHandler<World>[] = [
         const scenarioId = world.scenarioId;
         const script = world.script;
         const job = world.startEnvelope?.result.job;
-        if (
-          scenarioId === undefined ||
-          script === undefined ||
-          job == null
-        ) {
+        if (scenarioId === undefined || script === undefined || job == null) {
           throw new Error("Incomplete generate-plan submission");
         }
         await writeFile(
@@ -258,7 +224,7 @@ const handlers: readonly StepHandler<World>[] = [
                 script,
               },
             ],
-          }),
+          })
         );
         world.submit = await runCli(world, [
           "submit",
@@ -268,8 +234,48 @@ const handlers: readonly StepHandler<World>[] = [
           "--file",
           world.submissionPath,
         ]);
-        world.submitEnvelope =
-          parseOnlyJsonLine<Envelope>(world.submit);
+        world.submitEnvelope = parseOnlyJsonLine<Envelope>(world.submit);
+      }),
+  },
+  {
+    pattern:
+      /^a fixture reviewer submits verified-success citing the final screenshot and accessibility snapshot$/,
+    run: (world) =>
+      Effect.tryPromise(async () => {
+        expect(world.submitEnvelope).toMatchObject({
+          result: {
+            phase: "awaitingAgent",
+            pendingJob: { type: "classify-findings" },
+          },
+        });
+        const reviewPath = join(world.worktree, "review.json");
+        await writeFile(
+          reviewPath,
+          JSON.stringify({
+            schemaVersion: 1,
+            resolution: "report-only",
+            classifications: [
+              {
+                findingId: `${runId(world)}:${world.scenarioId}:1`,
+                classification: "verified-success",
+                reasoning:
+                  "Synthetic acceptance reviewer fixture verified the Account view.",
+                reviewedEvidence: ["final.png", "final.aria.yaml"],
+                coverageComplete: true,
+              },
+            ],
+          })
+        );
+        world.submit = await runCli(world, [
+          "submit",
+          runId(world),
+          "--job-id",
+          `${runId(world)}:classify-findings:1`,
+          "--file",
+          reviewPath,
+        ]);
+        world.submitEnvelope = parseOnlyJsonLine<Envelope>(world.submit);
+        expect(world.submit.exitCode).toBe(0);
       }),
   },
   {
@@ -289,14 +295,9 @@ const handlers: readonly StepHandler<World>[] = [
     run: (world, example, captures) =>
       Effect.tryPromise(async () => {
         world.job = await runCli(world, ["job", runId(world)]);
-        world.status = await runCli(world, [
-          "status",
-          runId(world),
-        ]);
-        world.jobEnvelope =
-          parseOnlyJsonLine<Envelope>(world.job);
-        world.statusEnvelope =
-          parseOnlyJsonLine<Envelope>(world.status);
+        world.status = await runCli(world, ["status", runId(world)]);
+        world.jobEnvelope = parseOnlyJsonLine<Envelope>(world.job);
+        world.statusEnvelope = parseOnlyJsonLine<Envelope>(world.status);
         expect([world.job, world.status]).toEqual([
           expect.objectContaining({ exitCode: 0, stderr: "" }),
           expect.objectContaining({ exitCode: 0, stderr: "" }),
@@ -319,12 +320,8 @@ const handlers: readonly StepHandler<World>[] = [
         expect(world.statusEnvelope?.result.attempts).toEqual([
           {
             scenarioId: exampleValue(example, captures[0]),
-            attemptNumber: Number(
-              exampleValue(example, captures[1]),
-            ),
-            scriptVersion: Number(
-              exampleValue(example, captures[2]),
-            ),
+            attemptNumber: Number(exampleValue(example, captures[1])),
+            scriptVersion: Number(exampleValue(example, captures[2])),
             status: exampleValue(example, captures[3]),
             evidencePath: expect.any(String),
           },
@@ -343,20 +340,15 @@ const handlers: readonly StepHandler<World>[] = [
           runId(world),
           "scenarios",
           world.scenarioId ?? "",
-          "attempt-1",
+          "attempt-1"
         );
         expect(
           JSON.parse(
-            await readFile(
-              join(attemptDirectory, "manifest.json"),
-              "utf8",
-            ),
-          ),
-        ).toEqual({
-          schemaVersion: Number(
-            exampleValue(example, captures[0]),
-          ),
-          files: ["result.json"],
+            await readFile(join(attemptDirectory, "manifest.json"), "utf8")
+          )
+        ).toMatchObject({
+          schemaVersion: Number(exampleValue(example, captures[0])),
+          files: ["result.json", "final.png", "final.aria.yaml"],
         });
       }),
   },
@@ -375,19 +367,15 @@ const handlers: readonly StepHandler<World>[] = [
               "scenarios",
               exampleValue(example, captures[0]),
               "attempt-1",
-              "result.json",
+              "result.json"
             ),
-            "utf8",
-          ),
+            "utf8"
+          )
         );
         expect(result).toMatchObject({
           scenarioId: exampleValue(example, captures[0]),
-          attemptNumber: Number(
-            exampleValue(example, captures[1]),
-          ),
-          scriptVersion: Number(
-            exampleValue(example, captures[2]),
-          ),
+          attemptNumber: Number(exampleValue(example, captures[1])),
+          scriptVersion: Number(exampleValue(example, captures[2])),
           status: exampleValue(example, captures[3]),
         });
       }),
@@ -398,20 +386,14 @@ const handlers: readonly StepHandler<World>[] = [
     run: (world, example, captures) =>
       Effect.tryPromise(async () => {
         const report = await readFile(
-          join(
-            world.worktree,
-            ".auto-qa",
-            "runs",
-            runId(world),
-            "report.md",
-          ),
-          "utf8",
+          join(world.worktree, ".auto-qa", "runs", runId(world), "report.md"),
+          "utf8"
         );
         expect(report).toContain(
-          `Run Outcome: ${exampleValue(example, captures[0])}`,
+          `Run Outcome: ${exampleValue(example, captures[0])}`
         );
         expect(report).toContain(
-          `${world.scenarioId}: Attempt 1, Script Version 0, passed`,
+          `${world.scenarioId}: Attempt 1, Script Version 0, passed`
         );
       }),
   },
@@ -428,30 +410,23 @@ const handlers: readonly StepHandler<World>[] = [
               "runs",
               runId(world),
               "scenarios",
-              world.scenarioId ?? "",
-            ),
-          ),
+              world.scenarioId ?? ""
+            )
+          )
         ).resolves.toEqual(["attempt-1"]);
         await expect(
-          access(
-            join(
-              world.worktree,
-              ".auto-qa",
-              "registry.json",
-            ),
-          ),
+          access(join(world.worktree, ".auto-qa", "registry.json"))
         ).rejects.toThrow();
         await expect(ownedBrowserProcesses()).resolves.toEqual([]);
       }),
   },
   {
-    pattern:
-      /^the harness-owned Target Application remains running$/,
+    pattern: /^the harness-owned Target Application remains running$/,
     run: (world) =>
       Effect.tryPromise(async () => {
         expect(world.targetApplication.isRunning()).toBe(true);
         await expect(
-          fetch(world.baseUrl).then((response) => response.ok),
+          fetch(world.baseUrl).then((response) => response.ok)
         ).resolves.toBe(true);
       }),
   },

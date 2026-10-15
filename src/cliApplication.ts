@@ -7,6 +7,7 @@ import { findGitWorktree } from "./gitWorktree.js";
 import { RunId } from "./workflowMachine.js";
 
 export type CliCommand =
+  | { readonly type: "cleanup" }
   | {
       readonly type: "start";
       readonly baseUrl: string;
@@ -37,14 +38,13 @@ type IdGenerator = () => string;
 export const runCliCommand = (
   command: CliCommand,
   currentDirectory: string,
-  makeId: IdGenerator,
+  makeId: IdGenerator
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
       const worktree = yield* findGitWorktree(currentDirectory);
       const stateDirectory = join(worktree, ".auto-qa");
-      const isReadOnly =
-        command.type === "job" || command.type === "status";
+      const isReadOnly = command.type === "job" || command.type === "status";
       if (!isReadOnly) {
         yield* Effect.tryPromise({
           try: () => mkdir(stateDirectory, { recursive: true }),
@@ -65,7 +65,7 @@ export const runCliCommand = (
         (emitWarning) =>
           Effect.sync(() => {
             process.emitWarning = emitWarning;
-          }),
+          })
       );
       const engine = yield* createWorkflowEngine({
         databasePath: join(stateDirectory, "state.db"),
@@ -83,8 +83,7 @@ export const runCliCommand = (
             }),
         });
         yield* Effect.tryPromise({
-          try: (signal) =>
-            fetch(baseUrl, { method: "HEAD", signal }),
+          try: (signal) => fetch(baseUrl, { method: "HEAD", signal }),
           catch: (cause) =>
             new CliBoundaryError({
               operation: "reach Target Application",
@@ -96,11 +95,19 @@ export const runCliCommand = (
           type: "start",
           baseUrl,
         });
-        return cliSuccess({
-          runId,
-          phase: result.phase,
-          job: result.pendingJob,
-        }, makeId());
+        return cliSuccess(
+          {
+            runId,
+            phase: result.phase,
+            job: result.pendingJob,
+          },
+          makeId()
+        );
+      }
+
+      if (command.type === "cleanup") {
+        yield* engine.cleanup();
+        return cliSuccess({ status: "clean" }, makeId());
       }
 
       const runId = RunId(command.runId);
@@ -137,17 +144,21 @@ export const runCliCommand = (
       }
 
       const status = yield* engine.getStatus(runId);
-      return cliSuccess({
-        phase: status.phase,
-        ...(status.outcome === undefined
-          ? {}
-          : {
-              outcome: status.outcome,
-              attempts: status.attempts,
-            }),
-        ...(status.reason === undefined
-          ? {}
-          : { reason: status.reason }),
-      }, makeId());
-    }),
+      return cliSuccess(
+        {
+          phase: status.phase,
+          ...(status.outcome === undefined
+            ? {}
+            : {
+                outcome: status.outcome,
+                attempts: status.attempts,
+                classifications: status.classifications,
+                coverageIncomplete: status.coverageIncomplete,
+                incompleteScenarios: status.incompleteScenarios,
+              }),
+          ...(status.reason === undefined ? {} : { reason: status.reason }),
+        },
+        makeId()
+      );
+    })
   );

@@ -16,11 +16,18 @@ export {
 } from "./workflowEngine.js";
 
 export type {
+  AttemptDiagnostic,
+  EvidenceBundle,
   ClassifyFindingsJob,
   Finding,
   FindingCause,
   Job,
 } from "./workflowProtocol.js";
+
+export {
+  FindingReviewError,
+  type FindingClassification,
+} from "./findingReview.js";
 
 export {
   ScenarioRuntimeError,
@@ -29,9 +36,7 @@ export {
   type ScenarioRuntime,
 } from "./scenarioRuntime.js";
 
-export {
-  makeDeterministicScenarioRuntime,
-} from "./deterministicScenarioRuntime.js";
+export { makeDeterministicScenarioRuntime } from "./deterministicScenarioRuntime.js";
 
 export {
   DEFAULT_PLAN_LIMITS,

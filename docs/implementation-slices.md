@@ -60,13 +60,29 @@ Deliver:
 - fault injection at every durable checkpoint and repeated cleanup/recovery
   tests that assert no duplicate side effects.
 
-## Slice 4: Failure and reliability loop
+## Slice 4: Evidence and agent-judged reliability loop
+
+The first increment is implemented as [report-only evidence review](./evidence-review.md).
+It covers failure diagnostics, continue-after-failure batches, final screenshot
+and accessibility capture, and atomic classification before reporting.
+The remaining items below are still planned, particularly named checkpoints,
+broader evidence, repair, and rerun routing.
 
 Deliver:
 
 - continue-after-failure Scenario batches;
 - full screenshots, trace, video, console, network, and action evidence;
-- atomic `classify-findings`;
+- automatic final-state screenshots and accessibility snapshots for every
+  mechanically passing Attempt, plus bounded runtime-owned named visual
+  checkpoints requested by Scenario Scripts;
+- one Finding per Attempt, including success Findings for mechanically passing
+  Attempts;
+- atomic `classify-findings` covering both nonpassing and success Findings,
+  with `verified-success` available only when the agent judges that a
+  mechanically passing Attempt's visual evidence supports its Scenario goal;
+- existing issue classifications available for success Findings when the
+  rendered result contradicts the assertions or cannot be judged reliably,
+  without changing the Attempt's stored mechanical status;
 - reliability-first routing;
 - `revise-scenario-script` with Versions 1 and 2;
 - `confirm-rerun` and `rerun --failed`;
@@ -122,3 +138,7 @@ Deliver:
 4. An unresolved Confirmed Defect remains `defects-found` even when coverage is
    incomplete; the result also sets `coverageIncomplete: true` and names the
    incomplete Scenarios.
+5. Deterministic Scenario execution remains authoritative for mechanical
+   status, but every Attempt produces a Finding for agent judgment before its
+   batch can proceed to reporting. This extends the existing classification
+   loop to success Findings instead of adding a separate visual-review Job.

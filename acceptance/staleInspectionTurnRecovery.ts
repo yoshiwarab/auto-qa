@@ -111,7 +111,7 @@ const processIdentity = (world: World) => ({
 });
 
 const reporter = {
-  writePassingReport: () => Effect.void,
+  writeReport: () => Effect.void,
 };
 
 const firstTurnOwner = (world: World): TurnOwner => ({

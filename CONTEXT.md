@@ -65,8 +65,12 @@ One execution of exactly one Scenario Script, identified by Scenario, Script Ver
 _Avoid_: Retry, execution
 
 **Finding**:
-A reviewable outcome raised from a failed or interrupted Scenario Attempt and awaiting classification.
+A reviewable result raised from every Scenario Attempt and awaiting coding-agent classification. A mechanically passing Attempt produces a success Finding that the agent must verify against its evidence rather than accepting automatically.
 _Avoid_: Error, failure
+
+**Verified Success**:
+The classification applied when a mechanically passing Attempt's assertions and visual evidence together support its Scenario goal.
+_Avoid_: Playwright pass, automatic success
 
 **Confirmed Defect**:
 A Finding that the coding agent has classified as an `app-defect`; only a Confirmed Defect may authorize application remediation.

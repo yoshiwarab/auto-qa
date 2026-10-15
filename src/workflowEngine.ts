@@ -1,15 +1,13 @@
 import { createHash } from "node:crypto";
 import { Clock, Data, Effect } from "effect";
+import { FindingReviewError, reviewFindings } from "./findingReview.js";
 import type { ProcessIdentityError } from "./processIdentity.js";
 import {
   PlanValidationError,
   type PlanLimits,
   validateGeneratePlan,
 } from "./planValidation.js";
-import type {
-  RunReportError,
-  RunReporter,
-} from "./runReporter.js";
+import { RunReportError, type RunReporter } from "./runReporter.js";
 import type {
   ActiveRunExistsError,
   RunBusyError,
@@ -37,7 +35,6 @@ import {
   type SubmitJobEvent,
 } from "./workflowMachine.js";
 import type {
-  AttemptRecord,
   AwaitingAgentDispatchResult,
   Change,
   ClassifyFindingsDispatchResult,
@@ -63,27 +60,25 @@ export class ChangeInspectionError {
 
   constructor(
     readonly message: string,
-    readonly cause?: unknown,
+    readonly cause?: unknown
   ) {}
 }
 
 export class JobSubmissionConflictError extends Data.TaggedError(
-  "JobSubmissionConflictError",
+  "JobSubmissionConflictError"
 )<{
   readonly jobId: string;
   readonly message: string;
 }> {}
 
 export class RunBudgetExceededError extends Data.TaggedError(
-  "RunBudgetExceededError",
+  "RunBudgetExceededError"
 )<{
   readonly runId: string;
   readonly message: string;
 }> {}
 
-const activeWorkBudgetExceeded = (
-  runId: RunId,
-): RunBudgetExceededError =>
+const activeWorkBudgetExceeded = (runId: RunId): RunBudgetExceededError =>
   new RunBudgetExceededError({
     runId,
     message: `Run ${runId} exhausted its active-work budget`,
@@ -102,6 +97,7 @@ export type WorkflowError =
   | InvalidTransitionError
   | JobSubmissionConflictError
   | PlanValidationError
+  | FindingReviewError
   | ProcessIdentityError
   | RunReportError
   | RunBusyError
@@ -112,45 +108,39 @@ export type WorkflowError =
   | WorkflowStoreError;
 
 export interface WorkflowEngine {
+  /** Reconcile runtime resources without advancing any Run's workflow. */
+  readonly cleanup: () => Effect.Effect<void, WorkflowError>;
   readonly dispatch: {
     (
       runId: RunId,
-      event: StartEvent,
+      event: StartEvent
     ): Effect.Effect<AwaitingAgentDispatchResult, WorkflowError>;
     (
       runId: RunId,
-      event: AbandonEvent,
+      event: AbandonEvent
     ): Effect.Effect<RunStatus, WorkflowError>;
     (
       runId: RunId,
-      event: SubmitJobEvent,
+      event: SubmitJobEvent
     ): Effect.Effect<
       CompletedDispatchResult | ClassifyFindingsDispatchResult,
       WorkflowError
     >;
   };
   readonly getPendingJob: (
-    runId: RunId,
+    runId: RunId
   ) => Effect.Effect<Job | null, WorkflowError>;
-  readonly getStatus: (
-    runId: RunId,
-  ) => Effect.Effect<RunStatus, WorkflowError>;
+  readonly getStatus: (runId: RunId) => Effect.Effect<RunStatus, WorkflowError>;
 }
 
 export const AUTOMATIC_PHASES = {
   inspectingChanges: {
     recoveryPolicy: "rerun",
-    work: (
-      snapshot: MachineSnapshot,
-      changeInspector: ChangeInspector,
-    ) =>
-      Effect.map(
-        changeInspector.inspect(),
-        (changes) => ({
-          event: { type: "changesInspected" } as const,
-          changes,
-        }),
-      ),
+    work: (snapshot: MachineSnapshot, changeInspector: ChangeInspector) =>
+      Effect.map(changeInspector.inspect(), (changes) => ({
+        event: { type: "changesInspected" } as const,
+        changes,
+      })),
   },
   executingScenarios: {
     recoveryPolicy: "record-interrupted",
@@ -159,7 +149,7 @@ export const AUTOMATIC_PHASES = {
       attempt: Parameters<ScenarioRuntime["execute"]>[0],
       baseUrl: URL,
       timeoutMs: number,
-      checkpointActiveWork: (elapsedMs: number) => void,
+      checkpointActiveWork: (elapsedMs: number) => void
     ) =>
       runtime.execute(attempt, {
         baseUrl,
@@ -172,31 +162,30 @@ export const AUTOMATIC_PHASES = {
     work: (
       reporter: RunReporter,
       runId: string,
-      attempts: Parameters<RunReporter["writePassingReport"]>[1],
-    ) => reporter.writePassingReport(runId, attempts),
+      result: CompletedDispatchResult
+    ) => reporter.writeReport(runId, result),
   },
 } as const;
 
 const recoveredSnapshot = (
   run: RunRecord,
-  event: StartEvent,
+  event: StartEvent
 ): Effect.Effect<MachineSnapshot, InvalidTransitionError> =>
-  run.phase === "inspectingChanges" &&
-  run.baseUrl.href === event.baseUrl.href
+  run.phase === "inspectingChanges" && run.baseUrl.href === event.baseUrl.href
     ? Effect.succeed(run)
     : Effect.fail(
         new InvalidTransitionError({
           phase: run.phase,
           event: event.type,
           allowedEvents: allowedEvents(run.phase),
-        }),
+        })
       );
 
 const validatePendingGeneratePlan = (
   run: RunRecord,
   event: SubmitJobEvent,
   runStore: RunStore,
-  limits: PlanLimits,
+  limits: PlanLimits
 ): Effect.Effect<
   readonly import("./planValidation.js").ScenarioSubmission[],
   PlanValidationError | InvalidTransitionError | WorkflowStoreError
@@ -213,13 +202,10 @@ const validatePendingGeneratePlan = (
           phase: run.phase,
           event: event.type,
           allowedEvents: allowedEvents(run.phase),
-        }),
+        })
       );
     }
-    const validation = validateGeneratePlan(
-      event.payload,
-      limits,
-    );
+    const validation = validateGeneratePlan(event.payload, limits);
     if (validation._tag === "Left") {
       return yield* Effect.fail(validation.left);
     }
@@ -230,12 +216,12 @@ const canonicalize = (value: unknown): unknown =>
   Array.isArray(value)
     ? value.map(canonicalize)
     : typeof value === "object" && value !== null
-    ? Object.fromEntries(
-        Object.entries(value)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, entry]) => [key, canonicalize(entry)]),
-      )
-    : value;
+      ? Object.fromEntries(
+          Object.entries(value)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, entry]) => [key, canonicalize(entry)])
+        )
+      : value;
 
 const submissionHash = (payload: unknown): string =>
   createHash("sha256")
@@ -244,7 +230,7 @@ const submissionHash = (payload: unknown): string =>
 
 const createGeneratePlanJob = (
   snapshot: MachineSnapshot,
-  changes: readonly Change[],
+  changes: readonly Change[]
 ): GeneratePlanJob => ({
   schemaVersion: 1,
   id: `${snapshot.runId}:generate-plan:1`,
@@ -252,6 +238,8 @@ const createGeneratePlanJob = (
   runId: snapshot.runId,
   payload: {
     baseUrl: snapshot.baseUrl.href,
+    scriptInstructions:
+      "Each script is an async function receiving {page, baseUrl, expect}. baseUrl is a URL object: navigate with await page.goto(baseUrl.href), or new URL('/path', baseUrl).href. Scenario ids may contain only letters, digits, underscores, and hyphens. Scripts are trusted local code. Leave the page open in the state that supports the Scenario goal; the runtime captures a final screenshot and accessibility snapshot before cleanup. A mechanical pass still requires visual review.",
     changes,
   },
 });
@@ -259,37 +247,31 @@ const createGeneratePlanJob = (
 const getRemainingActiveWorkMs = (
   runId: RunId,
   activeWorkBudgetMs: number,
-  runStore: RunStore,
+  runStore: RunStore
 ) =>
   Effect.gen(function* () {
     const usedWork = yield* runStore.getActiveWorkMs(runId);
     const remainingWork = activeWorkBudgetMs - usedWork;
     if (remainingWork <= 0) {
-      return yield* Effect.fail(
-        activeWorkBudgetExceeded(runId),
-      );
+      return yield* Effect.fail(activeWorkBudgetExceeded(runId));
     }
     return remainingWork;
   });
 
-const runWithinActiveWorkBudget = <
-  Result,
-  Failure,
-  Requirements,
->(
+const runWithinActiveWorkBudget = <Result, Failure, Requirements>(
   lease: TurnLease,
   runId: RunId,
   activeWorkBudgetMs: number,
   runStore: RunStore,
   work: (
-    remainingWorkMs: number,
-  ) => Effect.Effect<Result, Failure, Requirements>,
+    remainingWorkMs: number
+  ) => Effect.Effect<Result, Failure, Requirements>
 ) =>
   Effect.gen(function* () {
     const remainingWork = yield* getRemainingActiveWorkMs(
       runId,
       activeWorkBudgetMs,
-      runStore,
+      runStore
     );
     const startedAt = yield* Clock.currentTimeMillis;
     const result = yield* Effect.either(
@@ -297,15 +279,11 @@ const runWithinActiveWorkBudget = <
         Effect.timeoutFail({
           duration: remainingWork,
           onTimeout: () => activeWorkBudgetExceeded(runId),
-        }),
-      ),
+        })
+      )
     );
     const finishedAt = yield* Clock.currentTimeMillis;
-    yield* runStore.recordActiveWorkMs(
-      lease,
-      runId,
-      finishedAt - startedAt,
-    );
+    yield* runStore.recordActiveWorkMs(lease, runId, finishedAt - startedAt);
     if (result._tag === "Left") {
       return yield* Effect.fail(result.left);
     }
@@ -317,7 +295,7 @@ const runChangeInspection = (
   lease: TurnLease,
   runStore: RunStore,
   changeInspector: ChangeInspector,
-  planLimits: PlanLimits,
+  planLimits: PlanLimits
 ): Effect.Effect<AwaitingAgentDispatchResult, WorkflowError> =>
   Effect.gen(function* () {
     if (initialSnapshot.phase !== "inspectingChanges") {
@@ -326,7 +304,7 @@ const runChangeInspection = (
           phase: initialSnapshot.phase,
           event: "changesInspected",
           allowedEvents: allowedEvents(initialSnapshot.phase),
-        }),
+        })
       );
     }
     const result = yield* runWithinActiveWorkBudget(
@@ -337,8 +315,8 @@ const runChangeInspection = (
       () =>
         AUTOMATIC_PHASES.inspectingChanges.work(
           initialSnapshot,
-          changeInspector,
-        ),
+          changeInspector
+        )
     );
     const transition = step(initialSnapshot, result.event);
     const next =
@@ -349,7 +327,7 @@ const runChangeInspection = (
     yield* runStore.completeInspection(
       lease,
       initialSnapshot.runId,
-      pendingJob,
+      pendingJob
     );
 
     return {
@@ -361,7 +339,7 @@ const runChangeInspection = (
 const recoverInterruptedScenario = (
   run: RunRecord,
   lease: TurnLease,
-  runStore: RunStore,
+  runStore: RunStore
 ): Effect.Effect<ClassifyFindingsDispatchResult, WorkflowError> =>
   Effect.gen(function* () {
     const transition = step(run, {
@@ -372,7 +350,7 @@ const recoverInterruptedScenario = (
     }
     const pendingJob = yield* runStore.recordInterruptedScenario(
       lease,
-      run.runId,
+      run.runId
     );
     if (pendingJob === null) {
       return yield* Effect.fail(
@@ -380,7 +358,7 @@ const recoverInterruptedScenario = (
           phase: run.phase,
           event: "scenarioExecutionInterrupted",
           allowedEvents: allowedEvents(run.phase),
-        }),
+        })
       );
     }
     return {
@@ -390,32 +368,28 @@ const recoverInterruptedScenario = (
   });
 
 const withTurn = <Result, Error>(
-  runId: RunId,
+  runId: RunId | null,
   turnOwner: TurnOwner,
   runStore: RunStore,
-  use: (lease: TurnLease) => Effect.Effect<Result, Error>,
+  use: (lease: TurnLease) => Effect.Effect<Result, Error>
 ): Effect.Effect<
   Result,
   Error | ProcessIdentityError | RunBusyError | WorkflowStoreError
 > =>
   Effect.uninterruptibleMask((restore) =>
-    Effect.flatMap(
-      runStore.acquireTurn(runId, turnOwner),
-      (lease) =>
-        restore(use(lease)).pipe(
-          Effect.matchCauseEffect({
-            onFailure: (cause) =>
-              Effect.zipRight(
-                runStore.releaseTurn(lease),
-                Effect.failCause(cause),
-              ),
-            onSuccess: (result) =>
-              runStore
-                .releaseTurn(lease)
-                .pipe(Effect.as(result)),
-          }),
-        ),
-    ),
+    Effect.flatMap(runStore.acquireTurn(runId, turnOwner), (lease) =>
+      restore(use(lease)).pipe(
+        Effect.matchCauseEffect({
+          onFailure: (cause) =>
+            Effect.zipRight(
+              runStore.releaseTurn(lease),
+              Effect.failCause(cause)
+            ),
+          onSuccess: (result) =>
+            runStore.releaseTurn(lease).pipe(Effect.as(result)),
+        })
+      )
+    )
   );
 
 export const makeWorkflowEngine = ({
@@ -431,29 +405,52 @@ export const makeWorkflowEngine = ({
   readonly scenarioRuntime: ScenarioRuntime;
   readonly runReporter: RunReporter;
   readonly planLimits: PlanLimits;
-  readonly makeTurnOwner: () => Effect.Effect<
-    TurnOwner,
-    ProcessIdentityError
-  >;
+  readonly makeTurnOwner: () => Effect.Effect<TurnOwner, ProcessIdentityError>;
 }): WorkflowEngine => {
+  const report = (
+    lease: TurnLease,
+    run: RunRecord,
+    result: CompletedDispatchResult
+  ) =>
+    Effect.gen(function* () {
+      // Terminal reporting must remain possible after ordinary work exhausts
+      // its budget. A separate bound also applies to reporting recovery.
+      yield* AUTOMATIC_PHASES.reporting
+        .work(runReporter, run.runId, result)
+        .pipe(
+          Effect.timeoutFail({
+            duration: "30 seconds",
+            onTimeout: () =>
+              new RunReportError({
+                operation: "write Run report",
+                cause: new Error(
+                  "Terminal reporting exceeded 30 seconds; resubmit the identical review to retry"
+                ),
+              }),
+          })
+        );
+      yield* runStore.completeReport(lease, run.runId, result);
+      return result;
+    });
   const dispatch = (
     runId: RunId,
-    event: ExternalEvent,
+    event: ExternalEvent
   ): Effect.Effect<DispatchResult | RunStatus, WorkflowError> =>
     Effect.flatMap(makeTurnOwner(), (turnOwner) =>
       withTurn(runId, turnOwner, runStore, (lease) =>
         Effect.gen(function* () {
+          yield* scenarioRuntime.reconcile();
           const persisted = yield* runStore.loadRun(runId);
           if (event.type === "submitJob") {
             if (persisted === null) {
-              return yield* Effect.fail(
-                new RunNotFoundError({ runId }),
-              );
+              return yield* Effect.fail(new RunNotFoundError({ runId }));
             }
             const hash = submissionHash(event.payload);
             const runLimits = persisted.planLimits;
-            const priorSubmission =
-              yield* runStore.getJobSubmission(runId, event.jobId);
+            const priorSubmission = yield* runStore.getJobSubmission(
+              runId,
+              event.jobId
+            );
             if (
               priorSubmission?.status === "completed" &&
               priorSubmission.result !== null
@@ -465,7 +462,7 @@ export const makeWorkflowEngine = ({
                 new JobSubmissionConflictError({
                   jobId: event.jobId,
                   message: `Job ${event.jobId} was already completed with a different submission`,
-                }),
+                })
               );
             }
             if (priorSubmission?.status === "accepted") {
@@ -474,17 +471,23 @@ export const makeWorkflowEngine = ({
                   new JobSubmissionConflictError({
                     jobId: event.jobId,
                     message: `Job ${event.jobId} was already accepted with a different submission`,
-                  }),
+                  })
                 );
               }
               if (
-                persisted.phase === "executingScenarios" &&
-                lease.recoveredStaleOwner
+                persisted.phase === "reporting" &&
+                priorSubmission.result?.phase === "completed"
               ) {
+                return yield* report(lease, persisted, priorSubmission.result);
+              }
+              // The exclusive Turn proves no execution is still running.
+              // A prior cleanup failure may already have released a recovered
+              // lease, so recovery cannot depend on this acquisition being stale.
+              if (persisted.phase === "executingScenarios") {
                 return yield* recoverInterruptedScenario(
                   persisted,
                   lease,
-                  runStore,
+                  runStore
                 );
               }
               if (persisted.phase === "awaitingAgent") {
@@ -497,6 +500,26 @@ export const makeWorkflowEngine = ({
                 }
               }
             }
+            const pending = yield* runStore.getPendingJob(runId);
+            if (
+              pending?.type === "classify-findings" &&
+              pending.id === event.jobId
+            ) {
+              const result = yield* reviewFindings(pending, event.payload);
+              const transition = step(persisted, {
+                type: "findingsClassified",
+              });
+              if (transition._tag === "Left")
+                return yield* Effect.fail(transition.left);
+              yield* runStore.acceptReview(
+                lease,
+                runId,
+                pending.id,
+                hash,
+                result
+              );
+              return yield* report(lease, persisted, result);
+            }
             const { accepted, frozenScenarios } =
               yield* runWithinActiveWorkBudget(
                 lease,
@@ -505,91 +528,97 @@ export const makeWorkflowEngine = ({
                 runStore,
                 () =>
                   Effect.gen(function* () {
-                    const scenarios =
-                      yield* validatePendingGeneratePlan(
-                        persisted,
-                        event,
-                        runStore,
-                        runLimits,
-                      );
+                    const scenarios = yield* validatePendingGeneratePlan(
+                      persisted,
+                      event,
+                      runStore,
+                      runLimits
+                    );
                     const accepted = step(persisted, event);
                     if (accepted._tag === "Left") {
                       return yield* Effect.fail(accepted.left);
                     }
-                    const frozenScenarios =
-                      yield* runStore.acceptPlan(
-                        lease,
-                        runId,
-                        scenarios,
-                        hash,
-                      );
+                    const frozenScenarios = yield* runStore.acceptPlan(
+                      lease,
+                      runId,
+                      scenarios,
+                      hash
+                    );
                     return {
                       accepted: accepted.right,
                       frozenScenarios,
                     };
-                  }),
+                  })
               );
-            const attempts: AttemptRecord[] = [];
             let evaluatedSnapshot: MachineSnapshot | undefined;
-            for (const [
-              index,
-              scenario,
-            ] of frozenScenarios.entries()) {
-              const remainingWork =
-                yield* getRemainingActiveWorkMs(
-                  runId,
-                  runLimits.activeWorkBudgetMs,
-                  runStore,
-                );
+            for (const [index, scenario] of frozenScenarios.entries()) {
+              const remainingWork = yield* getRemainingActiveWorkMs(
+                runId,
+                runLimits.activeWorkBudgetMs,
+                runStore
+              );
               const startedAt = yield* Clock.currentTimeMillis;
               let activeWorkCheckpointMs: number | undefined;
               const scenarioLimitIsBinding =
-                runLimits.scenarioTimeoutMs <= remainingWork;
+                runLimits.scenarioTimeoutMs +
+                  (scenarioRuntime.executionOverheadMs ?? 0) <=
+                remainingWork;
               const effectiveTimeout = Math.min(
                 runLimits.scenarioTimeoutMs,
-                remainingWork,
+                remainingWork
               );
-              const execution =
-                yield* Effect.either(
-                  AUTOMATIC_PHASES.executingScenarios.work(
-                  scenarioRuntime,
-                  {
-                    runId,
-                    scenario,
-                    attemptNumber: 1,
-                    scriptVersion: 0,
-                  },
-                  persisted.baseUrl,
-                  effectiveTimeout,
-                  (elapsedMs) => {
-                    activeWorkCheckpointMs = elapsedMs;
-                  },
-                  ).pipe(
+              const execution = yield* Effect.either(
+                AUTOMATIC_PHASES.executingScenarios
+                  .work(
+                    scenarioRuntime,
+                    {
+                      runId,
+                      scenario,
+                      attemptNumber: 1,
+                      scriptVersion: 0,
+                    },
+                    persisted.baseUrl,
+                    effectiveTimeout,
+                    (elapsedMs) => {
+                      activeWorkCheckpointMs = elapsedMs;
+                    }
+                  )
+                  .pipe(
                     Effect.timeoutFail({
-                      duration: effectiveTimeout,
+                      duration: Math.min(
+                        runLimits.scenarioTimeoutMs +
+                          (scenarioRuntime.executionOverheadMs ?? 0),
+                        remainingWork
+                      ),
                       onTimeout: () =>
                         scenarioLimitIsBinding
                           ? new ScenarioRuntimeError({
                               operation: "execute Scenario",
                               cause: new Error(
-                                `Scenario timed out after ${effectiveTimeout}ms`,
+                                `Scenario timed out after ${effectiveTimeout}ms`
                               ),
                             })
                           : activeWorkBudgetExceeded(runId),
                     }),
-                  ),
-                );
+                    Effect.ensuring(
+                      Effect.gen(function* () {
+                        activeWorkCheckpointMs ??=
+                          (yield* Clock.currentTimeMillis) - startedAt;
+                      })
+                    ),
+                    Effect.scoped
+                  )
+              );
               yield* runStore.recordActiveWorkMs(
                 lease,
                 runId,
                 activeWorkCheckpointMs ??
-                  (yield* Clock.currentTimeMillis) - startedAt,
+                  (yield* Clock.currentTimeMillis) - startedAt
               );
               if (execution._tag === "Left") {
                 return yield* Effect.fail(execution.left);
               }
               const attempt = execution.right.attempt;
-              attempts.push(attempt);
               const nextScenario = frozenScenarios[index + 1];
               if (nextScenario === undefined) {
                 const evaluated = step(accepted, {
@@ -605,6 +634,23 @@ export const makeWorkflowEngine = ({
                 runId,
                 attempt,
                 nextScenario?.id,
+                {
+                  id: `${runId}:${scenario.id}:${attempt.attemptNumber}`,
+                  scenarioId: scenario.id,
+                  goal: scenario.goal,
+                  attemptNumber: attempt.attemptNumber,
+                  scriptVersion: attempt.scriptVersion,
+                  mechanicalStatus: attempt.status,
+                  cause:
+                    attempt.status === "passed"
+                      ? "success"
+                      : attempt.status === "interrupted"
+                        ? "interrupted"
+                        : (execution.right.diagnostic?.kind ?? "script"),
+                  summary: `Scenario ${scenario.id} mechanically ${attempt.status}; agent review required`,
+                  diagnostic: execution.right.diagnostic ?? null,
+                  evidenceBundle: execution.right.evidence ?? null,
+                }
               );
             }
             if (evaluatedSnapshot === undefined) {
@@ -612,57 +658,31 @@ export const makeWorkflowEngine = ({
                 new InvalidTransitionError({
                   phase: accepted.phase,
                   event: "scenarioBatchCompleted",
-                  allowedEvents: allowedEvents(
-                    accepted.phase,
-                  ),
-                }),
+                  allowedEvents: allowedEvents(accepted.phase),
+                })
               );
             }
-            const completed = step(evaluatedSnapshot, {
-              type: "reportCompleted",
-            });
-            if (completed._tag === "Left") {
-              return yield* Effect.fail(completed.left);
+            const pendingJob = yield* runStore.getPendingJob(runId);
+            if (pendingJob?.type !== "classify-findings") {
+              return yield* Effect.fail(
+                new InvalidTransitionError({
+                  phase: evaluatedSnapshot.phase,
+                  event: "submitJob",
+                  allowedEvents: [],
+                })
+              );
             }
-            yield* runWithinActiveWorkBudget(
-              lease,
-              runId,
-              runLimits.activeWorkBudgetMs,
-              runStore,
-              () =>
-                AUTOMATIC_PHASES.reporting.work(
-                  runReporter,
-                  runId,
-                  attempts,
-                ),
-            );
-            const result = {
-              phase: "completed",
-              outcome: "passed",
-              attempts,
-            } as const;
-            yield* runStore.completePassingReport(
-              lease,
-              runId,
-              result,
-            );
-            return result;
+            return { phase: "awaitingAgent", pendingJob };
           }
           if (event.type === "abandon") {
             if (persisted === null) {
-              return yield* Effect.fail(
-                new RunNotFoundError({ runId }),
-              );
+              return yield* Effect.fail(new RunNotFoundError({ runId }));
             }
             const transition = step(persisted, event);
             if (transition._tag === "Left") {
               return yield* Effect.fail(transition.left);
             }
-            return yield* runStore.abandon(
-              lease,
-              runId,
-              event.reason,
-            );
+            return yield* runStore.abandon(lease, runId, event.reason);
           }
           const initialTransition = step(
             {
@@ -670,7 +690,7 @@ export const makeWorkflowEngine = ({
               phase: "idle",
               baseUrl: event.baseUrl,
             },
-            event,
+            event
           );
           const inspecting =
             persisted === null
@@ -685,7 +705,7 @@ export const makeWorkflowEngine = ({
               runId,
               event.baseUrl,
               AUTOMATIC_PHASES.inspectingChanges.recoveryPolicy,
-              planLimits,
+              planLimits
             );
           }
 
@@ -694,13 +714,17 @@ export const makeWorkflowEngine = ({
             lease,
             runStore,
             changeInspector,
-            persisted?.planLimits ?? planLimits,
+            persisted?.planLimits ?? planLimits
           );
-        }),
-      ),
+        })
+      )
     );
 
   return {
+    cleanup: Effect.fn(function* () {
+      const owner = yield* makeTurnOwner();
+      yield* withTurn(null, owner, runStore, () => scenarioRuntime.reconcile());
+    }),
     dispatch: dispatch as WorkflowEngine["dispatch"],
     getPendingJob: (runId) => runStore.getPendingJob(runId),
     getStatus: (runId) => runStore.getStatus(runId),

@@ -1,9 +1,9 @@
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect, Fiber } from "effect";
+import { Deferred, Effect, Fiber, TestClock, TestContext } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   ActiveRunExistsError,
@@ -31,7 +31,7 @@ const makeTemporaryDirectory = async (): Promise<string> => {
 };
 
 const withHarnessBaseUrl = async <Result>(
-  use: (baseUrl: URL) => Promise<Result>,
+  use: (baseUrl: URL) => Promise<Result>
 ): Promise<Result> => {
   const targetApplication = createServer((_request, response) => {
     response.end("ok");
@@ -57,10 +57,7 @@ const withHarnessBaseUrl = async <Result>(
   }
 };
 
-const createNoChangeWorkflowEngine = (
-  databasePath: string,
-  readOnly = false,
-) =>
+const createNoChangeWorkflowEngine = (databasePath: string, readOnly = false) =>
   createWorkflowEngine({
     databasePath,
     changeInspector: {
@@ -69,42 +66,77 @@ const createNoChangeWorkflowEngine = (
     readOnly,
     scenarioRuntime: makeDeterministicScenarioRuntime(),
     runReporter: {
-      writePassingReport: () => Effect.void,
+      writeReport: () => Effect.void,
     },
   });
 
 const replaceTurnIncarnationWithLegacyTimestamp = (
-  databasePath: string,
+  databasePath: string
 ): void => {
   const database = new DatabaseSync(databasePath);
   database
-    .prepare(
-      "UPDATE turn_lock SET process_started_at = ? WHERE lock_id = 1",
-    )
+    .prepare("UPDATE turn_lock SET process_started_at = ? WHERE lock_id = 1")
     .run("2026-07-31T20:00:00.000Z");
   database.close();
 };
 
 afterEach(async () => {
   await Promise.all(
-    temporaryDirectories.splice(0).map((directory) =>
-      rm(directory, { recursive: true }),
-    ),
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true }))
   );
 });
 
 describe("WorkflowEngine durable generate-plan handoff", () => {
+  test("cleanup holds the worktree lock without inventing a Run and releases it afterward", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const blocked = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const owner = yield* createWorkflowEngine({
+            databasePath,
+            changeInspector: { inspect: () => Effect.succeed([]) },
+            scenarioRuntime: {
+              ...makeDeterministicScenarioRuntime(),
+              reconcile: () =>
+                Effect.zipRight(
+                  Deferred.succeed(entered, undefined),
+                  Deferred.await(release)
+                ),
+            },
+          });
+          const cleanup = yield* Effect.forkScoped(owner.cleanup());
+          yield* Deferred.await(entered);
+          const contender = yield* createNoChangeWorkflowEngine(databasePath);
+          const result = yield* Effect.either(contender.cleanup());
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(cleanup);
+          yield* contender.cleanup();
+          return result;
+        })
+      )
+    );
+    expect(blocked).toMatchObject({
+      _tag: "Left",
+      left: { _tag: "RunBusyError", owningRunId: null },
+    });
+  });
+
   test("a Run with no durable state has no pending Job", async () => {
     const directory = await makeTemporaryDirectory();
     const pendingJob = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const engine = yield* createNoChangeWorkflowEngine(
-            join(directory, "state.db"),
+            join(directory, "state.db")
           );
           return yield* engine.getPendingJob(RunId("missing-run"));
-        }),
-      ),
+        })
+      )
     );
 
     expect(pendingJob).toBeNull();
@@ -120,9 +152,9 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
             changeInspector: {
               inspect: () => Effect.succeed([]),
             },
-          }),
-        ),
-      ),
+          })
+        )
+      )
     );
 
     expect(result._tag).toBe("Left");
@@ -154,6 +186,9 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         payload: {
           baseUrl: baseUrl.href,
           changes: [{ kind: "modified", path: "src/dashboard.tsx" }],
+          scriptInstructions: expect.stringContaining(
+            "baseUrl is a URL object"
+          ),
         },
       };
 
@@ -168,8 +203,8 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               type: "start",
               baseUrl,
             });
-          }),
-        ),
+          })
+        )
       );
 
       expect(dispatchResult).toEqual({
@@ -188,8 +223,8 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               job: yield* engine.getPendingJob(runId),
               status: yield* engine.getStatus(runId),
             };
-          }),
-        ),
+          })
+        )
       );
 
       expect(restartedState).toEqual({
@@ -211,8 +246,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
       const result = await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
-            const engine =
-              yield* createNoChangeWorkflowEngine(databasePath);
+            const engine = yield* createNoChangeWorkflowEngine(databasePath);
             const started = yield* engine.dispatch(runId, {
               type: "start",
               baseUrl,
@@ -241,11 +275,11 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                     },
                   ],
                 },
-              }),
+              })
             );
             return { rejected, pendingJob: started.pendingJob };
-          }),
-        ),
+          })
+        )
       );
 
       expect(result.rejected).toMatchObject({
@@ -254,16 +288,14 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
           _tag: "PlanValidationError",
           scenarioId: "checkout-submits",
           field: "goal",
-          message:
-            "Scenario checkout-submits is missing required field goal",
+          message: "Scenario checkout-submits is missing required field goal",
         },
       });
 
       const restarted = await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
-            const engine =
-              yield* createNoChangeWorkflowEngine(databasePath);
+            const engine = yield* createNoChangeWorkflowEngine(databasePath);
             return {
               status: yield* engine.getStatus(runId),
               pendingJob: yield* engine.getPendingJob(runId),
@@ -277,20 +309,18 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                       {
                         id: "dashboard-loads",
                         goal: "Show the dashboard",
-                        preconditions: [
-                          "the dashboard is available",
-                        ],
+                        preconditions: ["the dashboard is available"],
                         mutates: false,
                         script:
                           "async ({ page }) => { await page.goto('/dashboard'); }",
                       },
                     ],
                   },
-                }),
+                })
               ),
             };
-          }),
-        ),
+          })
+        )
       );
 
       expect(restarted).toMatchObject({
@@ -302,16 +332,20 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         validSubmission: {
           _tag: "Right",
           right: {
-            phase: "completed",
-            outcome: "passed",
-            attempts: [
-              {
-                scenarioId: "dashboard-loads",
-                attemptNumber: 1,
-                scriptVersion: 0,
-                status: "passed",
+            phase: "awaitingAgent",
+            pendingJob: {
+              type: "classify-findings",
+              payload: {
+                findings: [
+                  {
+                    scenarioId: "dashboard-loads",
+                    attemptNumber: 1,
+                    scriptVersion: 0,
+                    mechanicalStatus: "passed",
+                  },
+                ],
               },
-            ],
+            },
           },
         },
       });
@@ -340,6 +374,10 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         scenario: { id: "" },
         message: "Scenario <unknown> has invalid required field id",
       },
+      {
+        scenario: { id: "../escape" },
+        message: "Scenario <unknown> has invalid required field id",
+      },
     ];
 
     await withHarnessBaseUrl(async (baseUrl) => {
@@ -349,7 +387,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
           Effect.scoped(
             Effect.gen(function* () {
               const engine = yield* createNoChangeWorkflowEngine(
-                join(directory, `state-${index}.db`),
+                join(directory, `state-${index}.db`)
               );
               const started = yield* engine.dispatch(runId, {
                 type: "start",
@@ -363,10 +401,10 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                     schemaVersion: 1,
                     scenarios: [example.scenario],
                   },
-                }),
+                })
               );
-            }),
-          ),
+            })
+          )
         );
 
         expect(rejected).toMatchObject({
@@ -403,8 +441,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         maxScenarios: 1,
         scenarioId: "<submission>",
         field: "schemaVersion",
-        message:
-          "generate-plan submission requires schemaVersion 1",
+        message: "generate-plan submission requires schemaVersion 1",
       },
       {
         payload: {
@@ -414,8 +451,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         maxScenarios: 1,
         scenarioId: "<submission>",
         field: "scenarios",
-        message:
-          "generate-plan submission requires a scenarios array",
+        message: "generate-plan submission requires a scenarios array",
       },
       {
         payload: {
@@ -438,16 +474,12 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         maxScenarios: 1,
         scenarioId: "<submission>",
         field: "scenarios",
-        message:
-          "generate-plan submission exceeds the Scenario limit of 1",
+        message: "generate-plan submission exceeds the Scenario limit of 1",
       },
       {
         payload: {
           schemaVersion: 1,
-          scenarios: [
-            validScenario,
-            validScenario,
-          ],
+          scenarios: [validScenario, validScenario],
         },
         maxScenarios: 2,
         scenarioId: validScenario.id,
@@ -548,10 +580,9 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                 changeInspector: {
                   inspect: () => Effect.succeed([]),
                 },
-                scenarioRuntime:
-                  makeDeterministicScenarioRuntime(),
+                scenarioRuntime: makeDeterministicScenarioRuntime(),
                 runReporter: {
-                  writePassingReport: () => Effect.void,
+                  writeReport: () => Effect.void,
                 },
                 planLimits: {
                   maxScenarios: example.maxScenarios,
@@ -568,15 +599,15 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   type: "submitJob",
                   jobId: started.pendingJob.id,
                   payload: example.payload,
-                }),
+                })
               );
               return {
                 result,
                 status: yield* engine.getStatus(runId),
                 pendingJob: yield* engine.getPendingJob(runId),
               };
-            }),
-          ),
+            })
+          )
         );
 
         expect(rejected).toMatchObject({
@@ -622,8 +653,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
       const first = await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
-            const engine =
-              yield* createNoChangeWorkflowEngine(databasePath);
+            const engine = yield* createNoChangeWorkflowEngine(databasePath);
             const started = yield* engine.dispatch(runId, {
               type: "start",
               baseUrl,
@@ -634,15 +664,14 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               payload,
             });
             return { jobId: started.pendingJob.id, result };
-          }),
-        ),
+          })
+        )
       );
 
       const replayed = await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
-            const engine =
-              yield* createNoChangeWorkflowEngine(databasePath);
+            const engine = yield* createNoChangeWorkflowEngine(databasePath);
             const same = yield* engine.dispatch(runId, {
               type: "submitJob",
               jobId: first.jobId,
@@ -651,8 +680,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   {
                     script: payload.scenarios[0]!.script,
                     mutates: payload.scenarios[0]!.mutates,
-                    preconditions:
-                      payload.scenarios[0]!.preconditions,
+                    preconditions: payload.scenarios[0]!.preconditions,
                     goal: payload.scenarios[0]!.goal,
                     id: payload.scenarios[0]!.id,
                   },
@@ -673,7 +701,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                     },
                   ],
                 },
-              }),
+              })
             );
             return {
               same,
@@ -681,8 +709,8 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               status: yield* engine.getStatus(runId),
               pendingJob: yield* engine.getPendingJob(runId),
             };
-          }),
-        ),
+          })
+        )
       );
 
       expect(replayed.same).toEqual(first.result);
@@ -696,10 +724,9 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         },
         status: {
           runId,
-          phase: "completed",
-          outcome: "passed",
+          phase: "awaitingAgent",
         },
-        pendingJob: null,
+        pendingJob: { type: "classify-findings" },
       });
     });
   });
@@ -720,10 +747,11 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   inspect: () => Effect.succeed([]),
                 },
                 scenarioRuntime: {
+                  reconcile: () => Effect.void,
                   execute: () => Effect.never,
                 },
                 runReporter: {
-                  writePassingReport: () => Effect.void,
+                  writeReport: () => Effect.void,
                 },
                 planLimits: {
                   maxScenarios: 1,
@@ -751,9 +779,9 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   ],
                 },
               });
-            }),
-          ),
-        ),
+            })
+          )
+        )
       );
 
       expect(timedOut).toMatchObject({
@@ -766,65 +794,371 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
     });
   });
 
-  test("a Run budget binding before the Scenario timeout reports budget exhaustion", async () => {
-    const directory = await makeTemporaryDirectory();
-    const databasePath = join(directory, "state.db");
-    const runId = RunId("run-active-budget-timeout");
+  test.each([0, 1000])(
+    "a Run budget binding before the Scenario timeout reports budget exhaustion with %ims overhead allowance",
+    async (executionOverheadMs) => {
+      const directory = await makeTemporaryDirectory();
+      const databasePath = join(directory, "state.db");
+      const runId = RunId("run-active-budget-timeout");
 
-    await withHarnessBaseUrl(async (baseUrl) => {
-      const exhausted = await Effect.runPromise(
-        Effect.either(
+      await withHarnessBaseUrl(async (baseUrl) => {
+        const exhausted = await Effect.runPromise(
+          Effect.either(
+            Effect.scoped(
+              Effect.gen(function* () {
+                const engine = yield* createWorkflowEngine({
+                  databasePath,
+                  changeInspector: {
+                    inspect: () => Effect.succeed([]),
+                  },
+                  scenarioRuntime: {
+                    executionOverheadMs,
+                    reconcile: () => Effect.void,
+                    execute: () => Effect.never,
+                  },
+                  runReporter: {
+                    writeReport: () => Effect.void,
+                  },
+                  planLimits: {
+                    maxScenarios: 1,
+                    scenarioTimeoutMs: 1_000,
+                    activeWorkBudgetMs: 100,
+                  },
+                });
+                const started = yield* engine.dispatch(runId, {
+                  type: "start",
+                  baseUrl,
+                });
+                return yield* engine.dispatch(runId, {
+                  type: "submitJob",
+                  jobId: started.pendingJob.id,
+                  payload: {
+                    schemaVersion: 1,
+                    scenarios: [
+                      {
+                        id: "never-finishes",
+                        goal: "Exhaust the Run budget",
+                        preconditions: [],
+                        mutates: false,
+                        script: "async () => {}",
+                      },
+                    ],
+                  },
+                });
+              })
+            )
+          )
+        );
+
+        expect(exhausted).toMatchObject({
+          _tag: "Left",
+          left: {
+            _tag: "RunBudgetExceededError",
+            runId,
+          },
+        });
+        const charged = await Effect.runPromise(
           Effect.scoped(
             Effect.gen(function* () {
-              const engine = yield* createWorkflowEngine({
-                databasePath,
-                changeInspector: {
-                  inspect: () => Effect.succeed([]),
-                },
-                scenarioRuntime: {
-                  execute: () => Effect.never,
-                },
-                runReporter: {
-                  writePassingReport: () => Effect.void,
-                },
-                planLimits: {
-                  maxScenarios: 1,
-                  scenarioTimeoutMs: 1_000,
-                  activeWorkBudgetMs: 100,
-                },
-              });
-              const started = yield* engine.dispatch(runId, {
-                type: "start",
-                baseUrl,
-              });
-              return yield* engine.dispatch(runId, {
-                type: "submitJob",
-                jobId: started.pendingJob.id,
+              const store = yield* openSqliteRunStore(databasePath);
+              return yield* store.getActiveWorkMs(runId);
+            })
+          )
+        );
+        expect(charged).toBeLessThan(300);
+      });
+    }
+  );
+
+  test("an exhausted Run can report incomplete coverage and release the worktree", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const runId = RunId("exhausted-report");
+    await withHarnessBaseUrl(async (baseUrl) => {
+      const submission = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector: { inspect: () => Effect.succeed([]) },
+              scenarioRuntime: {
+                reconcile: () => Effect.void,
+                execute: () => Effect.never,
+              },
+              planLimits: {
+                maxScenarios: 2,
+                scenarioTimeoutMs: 1000,
+                activeWorkBudgetMs: 100,
+              },
+            });
+            const started = yield* engine.dispatch(runId, {
+              type: "start",
+              baseUrl,
+            });
+            const submission = {
+              type: "submitJob",
+              jobId: started.pendingJob.id,
+              payload: {
+                schemaVersion: 1,
+                scenarios: ["interrupted", "unexecuted"].map((id) => ({
+                  id,
+                  goal: "Exercise exhaustion recovery",
+                  preconditions: [],
+                  mutates: false,
+                  script: "async () => {}",
+                })),
+              },
+            } as const;
+            expect(
+              yield* Effect.either(engine.dispatch(runId, submission))
+            ).toMatchObject({
+              _tag: "Left",
+              left: { _tag: "RunBudgetExceededError" },
+            });
+            return submission;
+          })
+        )
+      );
+      const completed = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector: { inspect: () => Effect.succeed([]) },
+            });
+            const recovered = yield* engine.dispatch(runId, submission);
+            if (recovered.phase !== "awaitingAgent")
+              throw new Error("Expected review");
+            const review = {
+              type: "submitJob",
+              jobId: recovered.pendingJob.id,
+              payload: {
+                schemaVersion: 1,
+                resolution: "report-only",
+                classifications: recovered.pendingJob.payload.findings.map(
+                  (finding) => ({
+                    findingId: finding.id,
+                    classification: "infra-issue",
+                    reasoning:
+                      "The Run exhausted its budget before coverage completed.",
+                    coverageComplete: false,
+                    reviewedEvidence: [],
+                  })
+                ),
+              },
+            } as const;
+            const result = yield* engine.dispatch(runId, review);
+            expect(yield* engine.dispatch(runId, review)).toEqual(result);
+            expect(yield* engine.getStatus(runId)).toMatchObject(result);
+            yield* engine.dispatch(RunId("after-exhaustion"), {
+              type: "start",
+              baseUrl,
+            });
+            return result;
+          })
+        )
+      );
+      expect(completed).toMatchObject({
+        phase: "completed",
+        outcome: "inconclusive",
+        coverageIncomplete: true,
+        incompleteScenarios: expect.arrayContaining([
+          "interrupted",
+          "unexecuted",
+        ]),
+      });
+      expect(
+        JSON.parse(
+          await readFile(join(directory, "runs", runId, "report.json"), "utf8")
+        )
+      ).toEqual(completed);
+    });
+  });
+
+  test("terminal reporting has a separate bounded allowance and remains retryable", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    await withHarnessBaseUrl(async (baseUrl) => {
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const enteredReport = yield* Deferred.make<void>();
+            const engine = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector: { inspect: () => Effect.succeed([]) },
+              scenarioRuntime: makeDeterministicScenarioRuntime(),
+              runReporter: {
+                writeReport: () =>
+                  Deferred.succeed(enteredReport, undefined).pipe(
+                    Effect.zipRight(Effect.never)
+                  ),
+              },
+              planLimits: {
+                maxScenarios: 1,
+                scenarioTimeoutMs: 100,
+                activeWorkBudgetMs: 100,
+              },
+            });
+            const runId = RunId("bounded-report");
+            const start = yield* engine.dispatch(runId, {
+              type: "start",
+              baseUrl,
+            });
+            const batch = yield* engine.dispatch(runId, {
+              type: "submitJob",
+              jobId: start.pendingJob.id,
+              payload: {
+                schemaVersion: 1,
+                scenarios: [
+                  {
+                    id: "account",
+                    goal: "Account renders",
+                    preconditions: [],
+                    mutates: false,
+                    script: "async () => {}",
+                  },
+                ],
+              },
+            });
+            if (batch.phase !== "awaitingAgent")
+              throw new Error("Expected review");
+            const review = {
+              type: "submitJob",
+              jobId: batch.pendingJob.id,
+              payload: {
+                schemaVersion: 1,
+                resolution: "report-only",
+                classifications: batch.pendingJob.payload.findings.map(
+                  (finding) => ({
+                    findingId: finding.id,
+                    classification: "verified-success",
+                    reasoning: "The rendered page supports the goal.",
+                    coverageComplete: true,
+                    reviewedEvidence: ["final.png", "final.aria.yaml"],
+                  })
+                ),
+              },
+            } as const;
+            const reporting = yield* Effect.forkScoped(
+              Effect.either(engine.dispatch(runId, review))
+            );
+            yield* Deferred.await(enteredReport);
+            yield* TestClock.adjust("29 seconds");
+            expect(yield* Fiber.poll(reporting)).toMatchObject({
+              _tag: "None",
+            });
+            yield* TestClock.adjust("2 seconds");
+            expect(yield* Fiber.poll(reporting)).toMatchObject({
+              _tag: "Some",
+              value: {
+                _tag: "Success",
+                value: { _tag: "Left", left: { _tag: "RunReportError" } },
+              },
+            });
+            expect(yield* engine.getStatus(runId)).toMatchObject({
+              phase: "reporting",
+            });
+            const restarted = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector: { inspect: () => Effect.succeed([]) },
+              scenarioRuntime: {
+                reconcile: () => Effect.void,
+                execute: () =>
+                  Effect.die("Reporting recovery must not execute Scenarios"),
+              },
+            });
+            expect(yield* restarted.dispatch(runId, review)).toMatchObject({
+              phase: "completed",
+              outcome: "passed",
+            });
+          })
+        ).pipe(Effect.provide(TestContext.TestContext))
+      );
+    });
+  });
+
+  test("slow scoped cleanup preserves completed Attempts and finishes before the next Scenario", async () => {
+    const directory = await makeTemporaryDirectory();
+    const databasePath = join(directory, "state.db");
+    const events: string[] = [];
+    await withHarnessBaseUrl(async (baseUrl) => {
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* createWorkflowEngine({
+              databasePath,
+              changeInspector: { inspect: () => Effect.succeed([]) },
+              scenarioRuntime: {
+                reconcile: () => Effect.void,
+                execute: (attempt, environment) =>
+                  Effect.gen(function* () {
+                    events.push(`start ${attempt.scenario.id}`);
+                    yield* Effect.addFinalizer(() =>
+                      Effect.sleep(400).pipe(
+                        Effect.andThen(() => {
+                          events.push(`cleaned ${attempt.scenario.id}`);
+                        })
+                      )
+                    );
+                    return yield* makeDeterministicScenarioRuntime().execute(
+                      attempt,
+                      environment
+                    );
+                  }),
+              },
+              planLimits: {
+                maxScenarios: 2,
+                scenarioTimeoutMs: 100,
+                activeWorkBudgetMs: 300,
+              },
+            });
+            const runId = RunId("slow-cleanup");
+            const start = yield* engine.dispatch(runId, {
+              type: "start",
+              baseUrl,
+            });
+            const submission = {
+              type: "submitJob",
+              jobId: start.pendingJob.id,
+              payload: {
+                schemaVersion: 1,
+                scenarios: ["first", "second"].map((id) => ({
+                  id,
+                  goal: "Keep completed evidence",
+                  preconditions: [],
+                  mutates: false,
+                  script: "async () => {}",
+                })),
+              },
+            } as const;
+            const result = yield* engine.dispatch(runId, submission);
+            expect(result).toMatchObject({
+              phase: "awaitingAgent",
+              pendingJob: {
                 payload: {
-                  schemaVersion: 1,
-                  scenarios: [
+                  findings: [
                     {
-                      id: "never-finishes",
-                      goal: "Exhaust the Run budget",
-                      preconditions: [],
-                      mutates: false,
-                      script: "async () => {}",
+                      scenarioId: "first",
+                      mechanicalStatus: "passed",
+                      evidenceBundle: {
+                        files: ["result.json", "final.png", "final.aria.yaml"],
+                      },
                     },
+                    { scenarioId: "second", mechanicalStatus: "passed" },
                   ],
                 },
-              });
-            }),
-          ),
-        ),
+              },
+            });
+            expect(events).toEqual([
+              "start first",
+              "cleaned first",
+              "start second",
+              "cleaned second",
+            ]);
+            expect(yield* engine.dispatch(runId, submission)).toEqual(result);
+          })
+        )
       );
-
-      expect(exhausted).toMatchObject({
-        _tag: "Left",
-        left: {
-          _tag: "RunBudgetExceededError",
-          runId,
-        },
-      });
     });
   });
 
@@ -843,6 +1177,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                 inspect: () => Effect.succeed([]),
               },
               scenarioRuntime: {
+                reconcile: () => Effect.void,
                 execute: (_attempt, environment) =>
                   Effect.acquireUseRelease(
                     Effect.void,
@@ -851,14 +1186,14 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                         Effect.ensuring(
                           Effect.sync(() => {
                             environment.checkpointActiveWork(3);
-                          }),
-                        ),
+                          })
+                        )
                       ),
-                    () => Effect.sleep(150),
+                    () => Effect.sleep(150)
                   ),
               },
               runReporter: {
-                writePassingReport: () => Effect.void,
+                writeReport: () => Effect.void,
               },
               planLimits: {
                 maxScenarios: 1,
@@ -871,11 +1206,10 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               baseUrl,
             });
             const store = yield* openSqliteRunStore(databasePath);
-            const activeWorkMs =
-              yield* store.getActiveWorkMs(runId);
+            const activeWorkMs = yield* store.getActiveWorkMs(runId);
             return { started, activeWorkMs };
-          }),
-        ),
+          })
+        )
       );
 
       await Effect.runPromise(
@@ -888,6 +1222,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   inspect: () => Effect.succeed([]),
                 },
                 scenarioRuntime: {
+                  reconcile: () => Effect.void,
                   execute: (_attempt, environment) =>
                     Effect.acquireUseRelease(
                       Effect.void,
@@ -896,14 +1231,14 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                           Effect.ensuring(
                             Effect.sync(() => {
                               environment.checkpointActiveWork(3);
-                            }),
-                          ),
+                            })
+                          )
                         ),
-                      () => Effect.sleep(150),
+                      () => Effect.sleep(150)
                     ),
                 },
                 runReporter: {
-                  writePassingReport: () => Effect.void,
+                  writeReport: () => Effect.void,
                 },
               });
               return yield* engine.dispatch(runId, {
@@ -922,9 +1257,9 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   ],
                 },
               });
-            }),
-          ),
-        ),
+            })
+          )
+        )
       );
 
       const recorded = await Effect.runPromise(
@@ -932,8 +1267,8 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
           Effect.gen(function* () {
             const store = yield* openSqliteRunStore(databasePath);
             return yield* store.getActiveWorkMs(runId);
-          }),
-        ),
+          })
+        )
       );
       expect(recorded - afterStart.activeWorkMs).toBeLessThan(100);
     });
@@ -963,8 +1298,8 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               type: "start",
               baseUrl,
             });
-          }),
-        ),
+          })
+        )
       );
       const rejected = await Effect.runPromise(
         Effect.either(
@@ -989,9 +1324,9 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   scenarios: ["first", "second"],
                 },
               });
-            }),
-          ),
-        ),
+            })
+          )
+        )
       );
 
       expect(rejected).toMatchObject({
@@ -999,8 +1334,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         left: {
           _tag: "PlanValidationError",
           field: "scenarios",
-          message:
-            "generate-plan submission exceeds the Scenario limit of 1",
+          message: "generate-plan submission exceeds the Scenario limit of 1",
         },
       });
     });
@@ -1024,19 +1358,13 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               },
               ownershipToken: "stale-turn-001",
             });
-            yield* store.startInspection(
-              staleLease,
-              runId,
-              baseUrl,
-              "rerun",
-              {
-                maxScenarios: 20,
-                scenarioTimeoutMs: 30_000,
-                activeWorkBudgetMs: 300_000,
-              },
-            );
-          }),
-        ),
+            yield* store.startInspection(staleLease, runId, baseUrl, "rerun", {
+              maxScenarios: 20,
+              scenarioTimeoutMs: 30_000,
+              activeWorkBudgetMs: 300_000,
+            });
+          })
+        )
       );
       replaceTurnIncarnationWithLegacyTimestamp(databasePath);
 
@@ -1075,8 +1403,8 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               pendingJob: yield* engine.getPendingJob(runId),
               status: yield* engine.getStatus(runId),
             };
-          }),
-        ),
+          })
+        )
       );
 
       expect(recovered).toMatchObject({
@@ -1131,8 +1459,8 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   inspect: () =>
                     Effect.fail(
                       new ChangeInspectionError(
-                        "inspection process interrupted",
-                      ),
+                        "inspection process interrupted"
+                      )
                     ),
                 },
               });
@@ -1140,9 +1468,9 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                 type: "start",
                 baseUrl,
               });
-            }),
-          ),
-        ),
+            })
+          )
+        )
       );
 
       expect(interrupted._tag).toBe("Left");
@@ -1169,8 +1497,8 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               type: "start",
               baseUrl,
             });
-          }),
-        ),
+          })
+        )
       );
 
       expect(recovered).toMatchObject({
@@ -1221,8 +1549,8 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               type: "start",
               baseUrl,
             });
-          }),
-        ),
+          })
+        )
       );
 
       try {
@@ -1235,16 +1563,13 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               Effect.gen(function* () {
                 const engine =
                   yield* createNoChangeWorkflowEngine(databasePath);
-                return yield* engine.dispatch(
-                  RunId("run-lock-contender"),
-                  {
-                    type: "start",
-                    baseUrl,
-                  },
-                );
-              }),
-            ),
-          ),
+                return yield* engine.dispatch(RunId("run-lock-contender"), {
+                  type: "start",
+                  baseUrl,
+                });
+              })
+            )
+          )
         );
 
         expect(concurrent._tag).toBe("Left");
@@ -1258,21 +1583,16 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         const observation = await Effect.runPromise(
           Effect.scoped(
             Effect.gen(function* () {
-              const engine =
-                yield* createNoChangeWorkflowEngine(
-                  databasePath,
-                  true,
-                );
+              const engine = yield* createNoChangeWorkflowEngine(
+                databasePath,
+                true
+              );
               return {
-                status: yield* engine.getStatus(
-                  RunId("run-lock-owner"),
-                ),
-                job: yield* engine.getPendingJob(
-                  RunId("run-lock-owner"),
-                ),
+                status: yield* engine.getStatus(RunId("run-lock-owner")),
+                job: yield* engine.getPendingJob(RunId("run-lock-owner")),
               };
-            }),
-          ),
+            })
+          )
         );
         expect(observation).toEqual({
           status: {
@@ -1284,12 +1604,8 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
 
         const release = releaseInspection;
         releaseInspection = undefined;
-        release?.([
-          { kind: "modified", path: "src/dashboard.tsx" },
-        ]);
-        const completed = await Effect.runPromise(
-          Fiber.join(firstDispatch),
-        );
+        release?.([{ kind: "modified", path: "src/dashboard.tsx" }]);
+        const completed = await Effect.runPromise(Fiber.join(firstDispatch));
         expect(completed).toMatchObject({
           phase: "awaitingAgent",
           pendingJob: {
@@ -1304,23 +1620,18 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               Effect.gen(function* () {
                 const engine =
                   yield* createNoChangeWorkflowEngine(databasePath);
-                return yield* engine.dispatch(
-                  RunId("run-after-release"),
-                  {
-                    type: "start",
-                    baseUrl,
-                  },
-                );
-              }),
-            ),
-          ),
+                return yield* engine.dispatch(RunId("run-after-release"), {
+                  type: "start",
+                  baseUrl,
+                });
+              })
+            )
+          )
         );
 
         expect(afterRelease._tag).toBe("Left");
         if (afterRelease._tag === "Left") {
-          expect(afterRelease.left).toBeInstanceOf(
-            ActiveRunExistsError,
-          );
+          expect(afterRelease.left).toBeInstanceOf(ActiveRunExistsError);
         }
       } finally {
         const release = releaseInspection;
@@ -1349,7 +1660,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   startTicks: "100",
                 },
                 ownershipToken: "lease-001",
-              },
+              }
             );
             yield* store.releaseTurn(firstLease);
             const currentLease = yield* store.acquireTurn(
@@ -1361,7 +1672,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   startTicks: "200",
                 },
                 ownershipToken: "lease-002",
-              },
+              }
             );
             const result = yield* Effect.either(
               store.startInspection(
@@ -1373,20 +1684,18 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                   maxScenarios: 20,
                   scenarioTimeoutMs: 30_000,
                   activeWorkBudgetMs: 300_000,
-                },
-              ),
+                }
+              )
             );
             yield* store.releaseTurn(currentLease);
             return result;
-          }),
-        ),
+          })
+        )
       );
 
       expect(checkpoint._tag).toBe("Left");
       if (checkpoint._tag === "Left") {
-        expect(checkpoint.left).toBeInstanceOf(
-          TurnOwnershipLostError,
-        );
+        expect(checkpoint.left).toBeInstanceOf(TurnOwnershipLostError);
       }
     });
   });
@@ -1411,8 +1720,8 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               type: "start",
               baseUrl,
             });
-          }),
-        ),
+          })
+        )
       );
 
       const repeatedStart = await Effect.runPromise(
@@ -1427,20 +1736,18 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                 type: "start",
                 baseUrl,
               });
-            }),
-          ),
-        ),
+            })
+          )
+        )
       );
 
       expect(repeatedStart._tag).toBe("Left");
       if (repeatedStart._tag === "Left") {
-        expect(repeatedStart.left).toBeInstanceOf(
-          InvalidTransitionError,
-        );
+        expect(repeatedStart.left).toBeInstanceOf(InvalidTransitionError);
         expect(repeatedStart.left).toMatchObject({
           phase: "awaitingAgent",
           event: "start",
-          allowedEvents: ["submitJob", "abandon"],
+          allowedEvents: ["findingsClassified", "submitJob", "abandon"],
         });
       }
     });
@@ -1455,8 +1762,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
       const result = await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
-            const engine =
-              yield* createNoChangeWorkflowEngine(databasePath);
+            const engine = yield* createNoChangeWorkflowEngine(databasePath);
             yield* engine.dispatch(runId, {
               type: "start",
               baseUrl,
@@ -1473,11 +1779,11 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
                 engine.dispatch(runId, {
                   type: "abandon",
                   reason: "must not replace the original reason",
-                }),
+                })
               ),
             };
-          }),
-        ),
+          })
+        )
       );
 
       expect(result).toMatchObject({
@@ -1495,9 +1801,7 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
       });
       expect(result.repeated._tag).toBe("Left");
       if (result.repeated._tag === "Left") {
-        expect(result.repeated.left).toBeInstanceOf(
-          InvalidTransitionError,
-        );
+        expect(result.repeated.left).toBeInstanceOf(InvalidTransitionError);
       }
     });
   });
@@ -1509,15 +1813,15 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
         Effect.scoped(
           Effect.gen(function* () {
             const engine = yield* createNoChangeWorkflowEngine(
-              join(directory, "state.db"),
+              join(directory, "state.db")
             );
             return yield* engine.dispatch(RunId("missing-run"), {
               type: "abandon",
               reason: "superseded",
             });
-          }),
-        ),
-      ),
+          })
+        )
+      )
     );
 
     expect(result._tag).toBe("Left");
@@ -1562,17 +1866,15 @@ describe("WorkflowEngine durable generate-plan handoff", () => {
               engine.dispatch(runId, {
                 type: "start",
                 baseUrl,
-              }),
+              })
             );
-          }),
-        ),
+          })
+        )
       );
 
       expect(repeatedStart._tag).toBe("Left");
       if (repeatedStart._tag === "Left") {
-        expect(repeatedStart.left).toBeInstanceOf(
-          InvalidTransitionError,
-        );
+        expect(repeatedStart.left).toBeInstanceOf(InvalidTransitionError);
       }
       expect(ownershipTokens).toEqual(["turn-1", "turn-2"]);
     });

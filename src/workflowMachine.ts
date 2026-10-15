@@ -50,6 +50,7 @@ export type MachineEvent =
   | ChangesInspectedEvent
   | ScenarioExecutionInterruptedEvent
   | ScenarioBatchCompletedEvent
+  | { readonly type: "findingsClassified" }
   | ReportCompletedEvent;
 export type MachineEventType = MachineEvent["type"];
 
@@ -85,12 +86,13 @@ export const TRANSITIONS = {
     abandon: "abandoned",
   },
   awaitingAgent: {
+    findingsClassified: "reporting",
     submitJob: "executingScenarios",
     abandon: "abandoned",
   },
   executingScenarios: {
     scenarioExecutionInterrupted: "awaitingAgent",
-    scenarioBatchCompleted: "reporting",
+    scenarioBatchCompleted: "awaitingAgent",
   },
   reporting: {
     reportCompleted: "completed",

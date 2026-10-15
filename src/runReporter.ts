@@ -1,5 +1,5 @@
 import { Data, Effect } from "effect";
-import type { AttemptRecord } from "./workflowProtocol.js";
+import type { CompletedDispatchResult } from "./workflowProtocol.js";
 
 export class RunReportError extends Data.TaggedError("RunReportError")<{
   readonly operation: string;
@@ -7,8 +7,8 @@ export class RunReportError extends Data.TaggedError("RunReportError")<{
 }> {}
 
 export interface RunReporter {
-  readonly writePassingReport: (
+  readonly writeReport: (
     runId: string,
-    attempts: readonly AttemptRecord[],
+    result: CompletedDispatchResult
   ) => Effect.Effect<void, RunReportError>;
 }

@@ -169,6 +169,7 @@ const createFindingsTable = (database: DatabaseSync): void => {
       cause TEXT NOT NULL,
       summary TEXT NOT NULL,
       evidence_path TEXT,
+      finding_json TEXT NOT NULL,
       FOREIGN KEY (run_id, scenario_id, attempt_number)
         REFERENCES attempts(run_id, scenario_id, attempt_number)
     ) STRICT;
@@ -218,7 +219,7 @@ export const prepareSqliteRunStoreSchema = (
 
       CREATE TABLE IF NOT EXISTS turn_lock (
         lock_id INTEGER PRIMARY KEY CHECK (lock_id = 1),
-        run_id TEXT NOT NULL,
+        run_id TEXT,
         process_id INTEGER NOT NULL,
         process_started_at TEXT NOT NULL,
         ownership_token TEXT NOT NULL UNIQUE

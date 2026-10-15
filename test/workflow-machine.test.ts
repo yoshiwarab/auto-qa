@@ -10,13 +10,7 @@ import {
   type MachineEventType,
   type MachinePhase,
 } from "../src/index.js";
-import {
-  afterAll,
-  beforeAll,
-  describe,
-  expect,
-  test,
-} from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const phases = Object.keys(TRANSITIONS) as MachinePhase[];
 
@@ -47,6 +41,7 @@ afterAll(async () => {
 });
 
 const eventFixtures = {
+  findingsClassified: (): MachineEvent => ({ type: "findingsClassified" }),
   start: (): MachineEvent => ({ type: "start", baseUrl }),
   changesInspected: (): MachineEvent => ({
     type: "changesInspected",
@@ -74,9 +69,7 @@ const eventFixtures = {
   }),
 } satisfies Record<MachineEventType, () => MachineEvent>;
 
-const eventTypes = Object.keys(
-  eventFixtures,
-) as MachineEventType[];
+const eventTypes = Object.keys(eventFixtures) as MachineEventType[];
 
 const eventFor = (eventType: MachineEventType): MachineEvent =>
   eventFixtures[eventType]();
@@ -93,7 +86,7 @@ describe("Workflow machine public values", () => {
         phase: "idle",
         baseUrl,
       },
-      { type: "changesInspected" },
+      { type: "changesInspected" }
     );
 
     expect(Either.isLeft(result)).toBe(true);
@@ -110,9 +103,7 @@ describe("Workflow machine Phase × Event coverage", () => {
     for (const eventType of eventTypes) {
       test(`${phase} + ${eventType}`, () => {
         const declared = (
-          TRANSITIONS[phase] as Partial<
-            Record<MachineEventType, MachinePhase>
-          >
+          TRANSITIONS[phase] as Partial<Record<MachineEventType, MachinePhase>>
         )[eventType];
         const result = step(
           {
@@ -120,7 +111,7 @@ describe("Workflow machine Phase × Event coverage", () => {
             phase,
             baseUrl,
           },
-          eventFor(eventType),
+          eventFor(eventType)
         );
 
         if (declared === undefined) {

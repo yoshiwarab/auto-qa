@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${1:-"$SCRIPT_ROOT"}" && pwd)"
+STATE_DIR="$PROJECT_ROOT/.swarmforge"
+SCRIPT_DIR="$PROJECT_ROOT/swarmforge/scripts"
+
+if [[ ! -d "$STATE_DIR" ]]; then
+  echo "No SwarmForge swarm found at $PROJECT_ROOT." >&2
+  exit 1
+fi
+
+if [[ ! -x "$SCRIPT_DIR/swarm-cleanup.sh" ]]; then
+  echo "Missing $SCRIPT_DIR/swarm-cleanup.sh; run ./swarm once to install the local scripts." >&2
+  exit 1
+fi
+
+exec "$SCRIPT_DIR/swarm-cleanup.sh" \
+  "$PROJECT_ROOT" \
+  "$STATE_DIR/window-ids"

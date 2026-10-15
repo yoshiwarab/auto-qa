@@ -18,7 +18,8 @@
 | **Scenario Script** | One numbered, immutable, accepted Playwright implementation of a Scenario. | Scenario Revision, Scenario Instance, Scenario Implementation |
 | **Script Version** | The zero-based ordinal of a Scenario Script; version 0 is the initial accepted Script and later accepted corrections increment it. | Revision number, attempt number |
 | **Attempt** | One execution of exactly one Scenario Script. | Retry, Scenario Instance, execution |
-| **Finding** | A reviewable outcome raised from a failed or interrupted Attempt. | Error, failure |
+| **Finding** | A reviewable result raised from every Attempt and awaiting coding-agent classification. A mechanically passing Attempt produces a success Finding. | Error, failure |
+| **Verified Success** | The classification applied when a mechanically passing Attempt's assertions and visual evidence together support its Scenario goal. | Playwright pass, automatic success |
 | **Evidence Bundle** | The human-readable and machine-readable artifacts produced by one Attempt. | Output, logs |
 
 ## Relationships
@@ -26,7 +27,8 @@
 - A **Run** contains one or more **Scenarios**.
 - A **Scenario** owns one or more numbered **Scenario Scripts**.
 - An **Attempt** references exactly one **Scenario Script** by Scenario identity and Script Version.
-- A failed or interrupted **Attempt** may produce one **Finding**.
+- Every **Attempt** produces exactly one **Finding** for the next atomic classification batch.
+- A mechanically passing **Attempt** is not a **Verified Success** until the coding agent has inspected its visual evidence and classified its success Finding.
 - A **Finding** remains in Run history even when a later Script Version passes.
 - A **Run Outcome** reflects the latest required Attempts and unresolved dispositions, not the absence of historical Findings.
 
@@ -45,3 +47,4 @@
 - **Scenario Revision** made “Revision 0” surprising and blurred stable Scenario intent with replaceable Playwright source. **Scenario Script** is now the canonical entity and **Script Version** its ordinal; “revise the Scenario Script” remains a useful verb phrase.
 - **Scenario** is stable intent and identity; frozen Playwright source belongs exclusively to **Scenario Script**.
 - **Scenario Instance** or **Instantiation** collides conceptually with **Attempt**, which is the actual runtime instance of executing a Script.
+- A `passed` **Attempt** describes its mechanical Playwright result, not a **Verified Success**. Finding classification adds agent judgment but cannot turn a mechanically nonpassing Attempt into a success.

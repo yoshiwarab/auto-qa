@@ -45,4 +45,4 @@ tar -xzf "$browser_build/$(basename "$tarball")" \
 PLAYWRIGHT_BROWSERS_PATH="$project_root/tmp/playwright-browsers" \
 AUTO_QA_PACKED_CLI="$browser_build/packed/package/dist/src/cli.js" \
   node "$project_root/node_modules/vitest/vitest.mjs" run \
-    --config "$project_root/vitest.browser.config.ts"
+    --config "$project_root/vitest.browser.config.ts" "$@"

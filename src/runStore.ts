@@ -1,12 +1,6 @@
 import { Data, Effect } from "effect";
-import type {
-  InvalidTransitionError,
-  RunId,
-} from "./workflowMachine.js";
-import type {
-  PlanLimits,
-  ScenarioSubmission,
-} from "./planValidation.js";
+import type { InvalidTransitionError, RunId } from "./workflowMachine.js";
+import type { PlanLimits, ScenarioSubmission } from "./planValidation.js";
 import type {
   AttemptRecord,
   CompletedDispatchResult,
@@ -14,6 +8,8 @@ import type {
   ClassifyFindingsJob,
   Job,
   RunStatus,
+  Finding,
+  DispatchResult,
 } from "./workflowProtocol.js";
 import type {
   ProcessIdentityError,
@@ -23,12 +19,10 @@ import type {
 export type JobSubmissionState = {
   readonly status: "pending" | "accepted" | "completed";
   readonly submissionHash: string | null;
-  readonly result: CompletedDispatchResult | null;
+  readonly result: DispatchResult | null;
 };
 
-export class WorkflowStoreError extends Data.TaggedError(
-  "WorkflowStoreError",
-)<{
+export class WorkflowStoreError extends Data.TaggedError("WorkflowStoreError")<{
   readonly operation: string;
   readonly cause: unknown;
 }> {}
@@ -38,17 +32,17 @@ export class RunNotFoundError extends Data.TaggedError("RunNotFoundError")<{
 }> {}
 
 export class ActiveRunExistsError extends Data.TaggedError(
-  "ActiveRunExistsError",
+  "ActiveRunExistsError"
 )<{
   readonly activeRunId: string;
 }> {}
 
 export class RunBusyError extends Data.TaggedError("RunBusyError")<{
-  readonly owningRunId: string;
+  readonly owningRunId: string | null;
 }> {}
 
 export class TurnOwnershipLostError extends Data.TaggedError(
-  "TurnOwnershipLostError",
+  "TurnOwnershipLostError"
 )<{
   readonly ownershipToken: string;
 }> {}
@@ -71,43 +65,39 @@ export type RunRecord = RunStatus & {
 
 export interface RunStore {
   readonly acquireTurn: (
-    runId: RunId,
-    owner: TurnOwner,
+    /** null reserves the worktree lock for cleanup without creating a Run. */
+    runId: RunId | null,
+    owner: TurnOwner
   ) => Effect.Effect<
     TurnLease,
     ProcessIdentityError | RunBusyError | WorkflowStoreError
   >;
   readonly releaseTurn: (
-    lease: TurnLease,
+    lease: TurnLease
   ) => Effect.Effect<void, WorkflowStoreError>;
   readonly loadRun: (
-    runId: RunId,
+    runId: RunId
   ) => Effect.Effect<RunRecord | null, WorkflowStoreError>;
   readonly startInspection: (
     lease: TurnLease,
     runId: RunId,
     baseUrl: URL,
     recoveryPolicy: RecoveryPolicy,
-    planLimits: PlanLimits,
+    planLimits: PlanLimits
   ) => Effect.Effect<
     void,
-    | ActiveRunExistsError
-    | TurnOwnershipLostError
-    | WorkflowStoreError
+    ActiveRunExistsError | TurnOwnershipLostError | WorkflowStoreError
   >;
   readonly completeInspection: (
     lease: TurnLease,
     runId: RunId,
-    job: GeneratePlanJob,
-  ) => Effect.Effect<
-    void,
-    TurnOwnershipLostError | WorkflowStoreError
-  >;
+    job: GeneratePlanJob
+  ) => Effect.Effect<void, TurnOwnershipLostError | WorkflowStoreError>;
   readonly acceptPlan: (
     lease: TurnLease,
     runId: RunId,
     scenarios: readonly ScenarioSubmission[],
-    submissionHash: string,
+    submissionHash: string
   ) => Effect.Effect<
     readonly ScenarioSubmission[],
     TurnOwnershipLostError | WorkflowStoreError
@@ -117,56 +107,49 @@ export interface RunStore {
     runId: RunId,
     attempt: AttemptRecord,
     nextScenarioId: string | undefined,
-  ) => Effect.Effect<
-    void,
-    TurnOwnershipLostError | WorkflowStoreError
-  >;
+    finding: Finding
+  ) => Effect.Effect<void, TurnOwnershipLostError | WorkflowStoreError>;
   readonly recordInterruptedScenario: (
     lease: TurnLease,
-    runId: RunId,
+    runId: RunId
   ) => Effect.Effect<
     ClassifyFindingsJob | null,
     TurnOwnershipLostError | WorkflowStoreError
   >;
-  readonly completePassingReport: (
+  readonly acceptReview: (
     lease: TurnLease,
     runId: RunId,
-    result: CompletedDispatchResult,
-  ) => Effect.Effect<
-    void,
-    TurnOwnershipLostError | WorkflowStoreError
-  >;
+    jobId: string,
+    submissionHash: string,
+    result: CompletedDispatchResult
+  ) => Effect.Effect<void, TurnOwnershipLostError | WorkflowStoreError>;
+  readonly completeReport: (
+    lease: TurnLease,
+    runId: RunId,
+    result: CompletedDispatchResult
+  ) => Effect.Effect<void, TurnOwnershipLostError | WorkflowStoreError>;
   readonly getJobSubmission: (
     runId: RunId,
-    jobId: string,
-  ) => Effect.Effect<
-    JobSubmissionState | null,
-    WorkflowStoreError
-  >;
+    jobId: string
+  ) => Effect.Effect<JobSubmissionState | null, WorkflowStoreError>;
   readonly getActiveWorkMs: (
-    runId: RunId,
+    runId: RunId
   ) => Effect.Effect<number, WorkflowStoreError>;
   readonly recordActiveWorkMs: (
     lease: TurnLease,
     runId: RunId,
-    elapsedMs: number,
-  ) => Effect.Effect<
-    void,
-    TurnOwnershipLostError | WorkflowStoreError
-  >;
+    elapsedMs: number
+  ) => Effect.Effect<void, TurnOwnershipLostError | WorkflowStoreError>;
   readonly getPendingJob: (
-    runId: RunId,
+    runId: RunId
   ) => Effect.Effect<Job | null, WorkflowStoreError>;
   readonly getStatus: (
-    runId: RunId,
-  ) => Effect.Effect<
-    RunStatus,
-    RunNotFoundError | WorkflowStoreError
-  >;
+    runId: RunId
+  ) => Effect.Effect<RunStatus, RunNotFoundError | WorkflowStoreError>;
   readonly abandon: (
     lease: TurnLease,
     runId: RunId,
-    reason: string,
+    reason: string
   ) => Effect.Effect<
     RunStatus,
     | RunNotFoundError

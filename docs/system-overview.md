@@ -16,11 +16,11 @@ flowchart TD
     Blocked -->|capture/setup repaired + explicit fresh retry| Auth
     Blocked -->|abandon| Abandoned["abandoned"]
     Auth --> Execute["Execute Scenarios sequentially"]
-    Execute -->|Run-wide runtime failure| Evaluate["Evaluate results"]
+    Execute -->|Run-wide runtime failure| Evaluate["Record Attempts and Findings"]
     Execute -->|Batch finished| Evaluate
-    Evaluate -->|No Findings| Report["Build report and Review Bundle"]
-    Evaluate -->|New Findings| ClassifyJob["awaitingAgent: classify-findings Job"]
+    Evaluate --> ClassifyJob["awaitingAgent: classify-findings Job"]
     ClassifyJob --> Route{"Route complete classification batch"}
+    Route -->|verified-success / no actionable issue| Report["Build report and Review Bundle"]
     Route -->|test-issue| ReviseJob["awaitingAgent: revise-scenario-script Job"]
     ReviseJob -->|Accepted Script Version, max two replacements| Rerun["Rerun affected Scenarios"]
     Route -->|infra / interrupted| ConfirmRerun["awaitingAgent: confirm-rerun Job"]
@@ -37,6 +37,17 @@ flowchart TD
 ```
 
 `awaitingAgent` is the sole ordinary agent Input Boundary. The pending Job—not the phase name—defines the requested response and its schema.
+
+Every Attempt now produces a Finding. The atomic `classify-findings` Job therefore
+contains both nonpassing Findings and success Findings from mechanically passing
+Attempts, each with its Scenario goal, mechanical result, viewport metadata,
+and manifest-relative screenshot and accessibility-snapshot references. The
+agent must inspect all listed evidence. It may classify a success Finding as
+`verified-success` or use the existing defect, observation, test-issue, or
+infrastructure classifications when the rendered result contradicts the
+mechanical pass or cannot be judged reliably. `verified-success` is invalid for
+a mechanically nonpassing Attempt, and classification never changes the stored
+mechanical Attempt status.
 
 Completed Runs are immutable. Verification after completion creates a new Run.
 
@@ -108,20 +119,18 @@ The host-neutral public interface remains intentionally small:
 interface WorkflowEngine {
   dispatch(
     runId: RunId,
-    event: ExternalEvent,
-  ): Effect.Effect<DispatchResult, WorkflowError>
+    event: ExternalEvent
+  ): Effect.Effect<DispatchResult, WorkflowError>;
 
-  getPendingJob(
-    runId: RunId,
-  ): Effect.Effect<Job | null, WorkflowError>
+  getPendingJob(runId: RunId): Effect.Effect<Job | null, WorkflowError>;
 
-  getStatus(
-    runId: RunId,
-  ): Effect.Effect<RunStatus, WorkflowError>
+  getStatus(runId: RunId): Effect.Effect<RunStatus, WorkflowError>;
+
+  cleanup(): Effect.Effect<void, WorkflowError>;
 }
 ```
 
-The engine owns the transition table, pure guards, `step`, automatic Turn loop, Job routing, recovery policies, and Run invariants. It knows nothing about Commander, argv, stdout, or a particular coding agent.
+The engine owns the transition table, pure guards, `step`, automatic Turn loop, Job routing, complete Finding classification, recovery policies, and Run invariants. It knows nothing about Commander, argv, stdout, or a particular coding agent.
 
 ### Run Store
 
@@ -154,18 +163,41 @@ The workflow crosses one browser seam:
 interface ScenarioRuntime {
   execute(
     attempt: FrozenScenarioAttempt,
-    environment: ScenarioEnvironment,
-  ): Effect.Effect<AttemptResult, ScenarioRuntimeError>
+    environment: ScenarioEnvironment
+  ): Effect.Effect<ScenarioExecution, ScenarioRuntimeError, Scope.Scope>;
 }
 ```
 
-The interface hides browser objects, processes, scopes, and artifact mechanics. V1 supplies directly managed Playwright plus a deterministic test adapter. Browser Control or another transport may be added later only if it can satisfy the same Attempt contract.
+The interface hides browser objects, processes, and artifact mechanics. The
+caller supplies one Effect Scope per Attempt. Execution deadlines apply inside
+that Scope; resource cleanup finishes outside the deadline before the next
+Scenario or Turn release. V1 supplies directly managed Playwright plus a
+deterministic test adapter. Browser Control or another transport may be added
+later only if it can satisfy the same Attempt contract.
 
 Scenarios execute sequentially. Ordinary assertion, script, and timeout failures do not stop the batch; typed run-wide auth, target, or browser failures do.
 
+The managed runtime captures a final-state screenshot and accessibility snapshot
+before closing every mechanically passing Attempt. Scenario Scripts may also
+request a bounded number of named visual checkpoints through a runtime-owned
+helper; the runtime chooses paths, writes metadata, and finalizes artifacts, so
+scripts never manage Evidence Bundle storage. Nonpassing Attempts receive the
+available failure-state visual evidence for Finding classification. These
+collectors deepen the existing Scenario Runtime module rather than exposing
+browser objects or artifact mechanics to the Workflow Engine.
+
 ### Evidence and reporting
 
-Each Attempt produces an Evidence Bundle. Each completed Run produces a report and curated Review Bundle. Raw traces are treated as sensitive; Auth Profiles are always separate. Auto-QA never publishes directly in v1. A first-party GitHub Actions recipe uploads artifacts, writes a Job Summary, and links the PR to the review material.
+Each Attempt produces an Evidence Bundle. Its manifest identifies visual
+artifacts by stable, relative references that can be placed in a Job without
+embedding image bytes or exposing arbitrary paths. Mechanically passing
+Attempts cannot proceed directly to reporting: their success Findings cross
+the same `classify-findings` Job seam used for nonpassing Attempts, and the
+external coding agent judges their captured evidence there. Auto-QA still hosts
+no model provider; host adapters are responsible for making referenced images
+available to the agent answering the Job.
+
+Each completed Run produces a report and curated Review Bundle. Raw traces are treated as sensitive; Auth Profiles are always separate. Auto-QA never publishes directly in v1. A first-party GitHub Actions recipe uploads artifacts, writes a Job Summary, and links the PR to the review material.
 
 ## Persistence and files
 
@@ -174,6 +206,8 @@ Each Attempt produces an Evidence Bundle. Each completed Run produces a report a
 ├── state.db
 ├── locks/
 ├── registry.json
+├── runtime/
+│   └── <launch-token>/  # disposable profile, browser artifacts, staged evidence
 ├── auth/
 │   └── <profile>.json
 └── runs/
@@ -192,7 +226,13 @@ Each Attempt produces an Evidence Bundle. Each completed Run produces a report a
                     └── result.json
 ```
 
-`cleanup` reconciles only registered runtime resources and stale locks. Run Retention manages disk usage through `runs storage`, `runs expire`, and `runs keep`; it never expires active, blocked, or Kept Runs.
+`cleanup` reconciles only registered runtime resources and stale locks. It takes
+no Run ID, shares the worktree lock with Run Turns, and leaves workflow facts,
+Jobs, and finalized evidence unchanged. After stopping owned browser processes,
+it removes their registered disposable workspace, including the browser profile
+and unpublished evidence. Run Retention manages disk usage through
+`runs storage`, `runs expire`, and `runs keep`; it never expires active, blocked,
+or Kept Runs.
 
 ## Run policies
 

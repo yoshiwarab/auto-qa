@@ -36,8 +36,9 @@ inspect an adapter only through its domain interface.
 - Generate coverage requiring every automatic Phase to declare work and a
   recovery policy, and every Input Boundary to expose a Job or blocking action.
 - Check invariants after generated Event sequences, including validated-plan
-  requirements, Scenario/Script/Attempt references, single Job completion, and
-  immutable completed Runs.
+  requirements, Scenario/Script/Attempt/Finding references, complete Finding
+  classification for every Attempt, single Job completion, and immutable
+  completed Runs.
 - Generate `docs/machine.md` from the same table and fail CI on drift.
 
 ### Workflow and persistence integration
@@ -50,6 +51,11 @@ inspect an adapter only through its domain interface.
 - Cover identical and conflicting repeated Job submissions, out-of-order Jobs,
   competing mutations, concurrent read-only queries, abandonment, source
   drift, budget exhaustion, and every Run Outcome precedence combination.
+- Cover atomic `classify-findings` submissions with every Attempt's Finding
+  listed exactly once, invalid or escaping evidence references,
+  `verified-success` on mechanically passing Attempts, issue classifications
+  on success Findings, and rejection of `verified-success` for nonpassing
+  Attempts without changing mechanical Attempt status.
 - Run the same Run Store contract against each production Store adapter that is
   ever added.
 
@@ -72,6 +78,15 @@ inspect an adapter only through its domain interface.
 - Cover passing, assertion failure, timeout, console error, request failure,
   screenshot, trace, video mode, Mutating Scenario permission, batch
   continuation, and report generation.
+- Prove a mechanically passing Attempt captures a final-state screenshot and
+  accessibility snapshot before its context closes, exposes them with its
+  success Finding through the `classify-findings` Job, and cannot reach
+  reporting before that Finding is classified.
+- Exercise named visual checkpoints and deliberately broken QA Lab states that
+  satisfy their Playwright assertions while remaining visibly blank, obscured,
+  clipped, low-contrast, or incorrectly laid out. Assert artifact fidelity and
+  Finding routing through public seams rather than treating model output as a
+  deterministic browser-test oracle.
 - Assert that each Attempt uses an isolated context, its frozen Scenario Script
   bytes, its deterministic evidence path, and no browser or child process
   survives the invoking process.
@@ -123,6 +138,9 @@ inspect an adapter only through its domain interface.
 ### Evidence, reporting, and retention
 
 - Validate every finalized bundle against a versioned manifest/schema.
+- Validate that Job-visible evidence references are manifest-listed,
+  Attempt-scoped, relative, and sufficient for an image-capable host to resolve
+  without arbitrary filesystem access.
 - Prove temporary Attempt directories are not linked or published and are
   promoted only after required artifacts and `result.json` are durable.
 - Cover `passed`, `defects-found`, `inconclusive`, and
@@ -142,10 +160,27 @@ The suite maintains explicit tables for:
   unrecoverable tool failure;
 - report-only versus agent-fix behavior;
 - anonymous, local-profile, and unattended authentication;
-- local versus CI evidence and exit-code policy.
+- local versus CI evidence and exit-code policy;
+- every success-Finding classification and its retry, completion, remediation,
+  and incomplete-coverage consequences.
 
 These matrices are specifications. Generated tests consume them where possible
 so adding a new enum member without a case fails immediately.
+
+## Agent-judgment evaluations
+
+The deterministic suite proves evidence fidelity, Job completeness, durable
+routing, and the rule that subjective judgment cannot override mechanical
+results. It does not pretend that a model's visual opinion is deterministic.
+
+A separate versioned evaluation corpus uses QA Lab screenshots and
+accessibility snapshots with known visual defects and clean controls. Supported
+host-agent integrations are measured for missed obvious defects, false
+issue classifications, appropriate test-issue or infrastructure classification
+when evidence cannot be judged, evidence citation accuracy, and consistency
+across repeated runs. These evaluations tune Job instructions and evidence
+defaults; their measured thresholds are set before V1 release and remain
+separate from the fast deterministic gate.
 
 ## Isolation and determinism
 
@@ -186,6 +221,8 @@ hard behavioral gates are:
   behavior appropriate to its recovery policy;
 - every Job and CLI error maps to its documented machine-readable response and
   exit code;
+- no execution batch reaches reporting while any Attempt lacks a classified
+  Finding;
 - every owned-process test ends with no leaked registered resources;
 - mutation testing of the pure transition guards, recovery routing, and Outcome
   precedence reaches an agreed threshold before v1 release;
