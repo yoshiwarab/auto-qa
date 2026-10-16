@@ -65,7 +65,7 @@ const run = async (args: string[]) => {
         ...playwright,
         "--trace=on",
         `--output=${runDir}`,
-        `--reporter=line,${fileURLToPath(new URL("reporter.js", import.meta.url))}`,
+        `--reporter=line,${fileURLToPath(new URL(`reporter${import.meta.url.slice(-3)}`, import.meta.url))}`,
         ...(local ? [] : ["--grep=@prod-safe(?![\\w-])", "--no-deps"]),
       ],
       {
