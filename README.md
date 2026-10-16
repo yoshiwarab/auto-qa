@@ -17,6 +17,35 @@ The first run takes about 30 seconds. npm clones and builds auto-qa, and
 Playwright downloads Chromium. Later runs spend about 6 seconds in npx
 re-resolving the git branch before the tests start.
 
+## How it works
+
+`run` wraps `playwright test`. It never starts or stops your app; tests
+drive the one already serving `--base-url`.
+
+```mermaid
+flowchart LR
+  agent["agent or CI"] -->|"auto-qa run --base-url URL"| mode{"--scratch?"}
+  mode -->|no| project["project's Playwright<br>and config"]
+  mode -->|yes| scratch["auto-qa's own Playwright,<br>specs copied to a temp dir"]
+  project --> pw["playwright test<br>+ trace + manifest reporter"]
+  scratch --> pw
+  pw -->|drives| app[("your running app")]
+  pw --> evidence["evidence: manifest.json,<br>traces, screenshots,<br>accessibility snapshots"]
+  pw -->|"run ends or Ctrl-C"| cleanup["kill the run's marked<br>processes, delete its temp dir"]
+```
+
+When a suite fails, `triage` and `guard` help an agent decide what to fix:
+
+```mermaid
+flowchart LR
+  fail["run fails"] --> triage["auto-qa triage<br>writes triage.md"]
+  triage --> verdict{"agent's verdict"}
+  verdict -->|regression| fixapp["fix the app"]
+  verdict -->|drift| fixspec["fix how the spec<br>clicks or navigates"]
+  verdict -->|flaky| rerun["rerun once,<br>report if still flaky"]
+  fixspec --> guard["auto-qa guard: fails if<br>an assertion changed"]
+```
+
 ## Commands
 
 ```bash
