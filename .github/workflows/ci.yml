@@ -1,7 +1,7 @@
 name: ci
 
 # Pushes to master, plus pull requests; a push to a PR branch would otherwise
-# run the macOS job twice, and macOS minutes cost 10x on a private repo.
+# run every job twice.
 on:
   push:
     branches: [master]
