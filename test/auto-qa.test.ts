@@ -20,6 +20,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, onTestFinished, test } from "vitest";
 
+// A git hook running these tests exports GIT_INDEX_FILE and friends; fixture
+// repos must not inherit them or their commands write into this repo.
+for (const key of Object.keys(process.env))
+  if (key.startsWith("GIT_")) delete process.env[key];
+
 const root = fileURLToPath(new URL("..", import.meta.url));
 
 const app = fileURLToPath(new URL("app/", import.meta.url));
