@@ -1,8 +1,9 @@
 # auto-qa agent guidance
 
-Read `README.md` first. auto-qa is deliberately small. The finished tool
-(`run`, `cleanup` and a later `triage`) has a budget of about 450 lines of
-`src/`.
+Read `README.md` first. auto-qa is deliberately small. Its four commands
+(`run`, `cleanup`, `triage` and `guard`) share a budget of 450 lines of `src/`,
+enforced by `pnpm check`. Read `docs/decisions.md` before reopening a settled
+question.
 
 - Prefer Playwright's own config, CLI flags, reporters and fixtures over custom
   plumbing. Delete before adding; a new abstraction needs more than one use.

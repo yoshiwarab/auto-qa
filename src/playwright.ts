@@ -10,7 +10,11 @@ export const playwrightCli = (own: boolean) => {
       own ? import.meta.url : resolve("package.json")
     ).resolve("@playwright/test/cli");
   } catch {
-    throw new Error("this project has no @playwright/test; use --scratch");
+    throw new Error(
+      own
+        ? "auto-qa's own @playwright/test is missing; reinstall auto-qa"
+        : "this project has no @playwright/test; use --scratch"
+    );
   }
 };
 

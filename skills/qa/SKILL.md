@@ -52,6 +52,9 @@ test("saving a draft lists it", async ({ page }) => {
   or seed state through test-only endpoints. If the action has a side effect,
   assert it, for example by reloading and checking it persisted.
 - Wait with web-first assertions, never `waitForTimeout`.
+- With `page.clock`, do any writes on the real clock first. Apps whose data
+  client runs on timers stall under a paused fake clock. Then install the
+  clock, reload and `pauseAt`.
 
 ## 2. Run it
 
