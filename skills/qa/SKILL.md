@@ -11,8 +11,9 @@ any change a user could see, before you say it works. Skip it for pure
 refactors that existing tests already cover.
 
 Run it as `npx auto-qa` only if auto-qa is installed in the project. Otherwise
-use `npx github:yoshiwarab/auto-qa`; never a bare `npx auto-qa`, which would
-fetch whatever package has that name on npm. Below, `auto-qa` means whichever
+use `npx --allow-git=root github:yoshiwarab/auto-qa` (npm 12 refuses git
+packages without that flag); never a bare `npx auto-qa`, which would fetch
+whatever package has that name on npm. Below, `auto-qa` means whichever
 applies. It brings its own Playwright and Chromium; install nothing.
 
 ## 1. Write a spec

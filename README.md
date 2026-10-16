@@ -7,8 +7,11 @@ processes with `ps`.
 It needs nothing installed in the project:
 
 ```bash
-npx github:yoshiwarab/auto-qa run ...
+npx --allow-git=root github:yoshiwarab/auto-qa run ...
 ```
+
+npm 12 refuses git packages by default; `--allow-git=root` allows only
+auto-qa itself.
 
 The first run takes about 30 seconds. npm clones and builds auto-qa, and
 Playwright downloads Chromium. Later runs spend about 6 seconds in npx
