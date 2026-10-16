@@ -102,20 +102,14 @@ To pin a version, add it as a git dev dependency:
 npm install -D github:yoshiwarab/auto-qa
 ```
 
-Its `prepare` script builds `dist/` during install. pnpm blocks that for git
-dependencies until you allow it in `pnpm-workspace.yaml`. On pnpm 11:
+Its `prepare` script builds `dist/` during install. pnpm 11 fetches it as a
+tarball from codeload.github.com, so no SSH key is needed, but blocks the build
+until `pnpm-workspace.yaml` allows that exact commit. The install error prints
+the entry to add; replace it whenever you update auto-qa:
 
 ```yaml
 allowBuilds:
-  "auto-qa@git+ssh://git@github.com/yoshiwarab/auto-qa.git": true
-```
-
-pnpm 10 (10.26 and later) accepts only the exact commit that its error message
-prints, so update the entry whenever you update auto-qa:
-
-```yaml
-onlyBuiltDependencies:
-  - "auto-qa@git+ssh://git@github.com/yoshiwarab/auto-qa.git#<commit>"
+  "auto-qa@https://codeload.github.com/yoshiwarab/auto-qa/tar.gz/<full commit sha>": true
 ```
 
 auto-qa refuses a config whose `baseURL` differs from `--base-url`. Make your
