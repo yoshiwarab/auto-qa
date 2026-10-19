@@ -10,9 +10,9 @@ trace for each test, and makes sure no browser outlives the run. Use it after
 any change a user could see, before you say it works. Skip it for pure
 refactors that existing tests already cover.
 
-Run it as `npx auto-qa`. That uses the project's copy if it has one, and
-otherwise fetches it from npm; below, `auto-qa` means `npx auto-qa`. It brings
-its own Playwright and Chromium; install nothing.
+Run it as `npx auto-qa` if the project has auto-qa installed, and otherwise
+as `npx @yoshiwarab/auto-qa`. Below, `auto-qa` means whichever applies. It
+brings its own Playwright and Chromium; install nothing.
 
 ## 1. Write a spec
 

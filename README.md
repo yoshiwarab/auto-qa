@@ -7,8 +7,11 @@ processes with `ps`.
 It needs nothing installed in the project:
 
 ```bash
-npx auto-qa run ...
+npx @yoshiwarab/auto-qa run ...
 ```
+
+npm refused the bare name `auto-qa` as too close to `autoqa`, so the package
+is scoped, but the command it installs is still `auto-qa`.
 
 The first run takes about 30 seconds while Playwright downloads Chromium.
 
@@ -94,7 +97,7 @@ copy or symlink `skills/qa/` into your project's `.claude/skills/` or
 To pin a version, add it as a dev dependency:
 
 ```bash
-npm install -D auto-qa
+npm install -D @yoshiwarab/auto-qa
 ```
 
 auto-qa refuses a config whose `baseURL` differs from `--base-url`. Make your
@@ -132,3 +135,6 @@ fnm exec --using 22 pnpm check   # lint, build, typecheck, tests
 
 `pnpm check` also keeps `src/` under 450 lines. The pre-commit hook and CI run
 it.
+
+To release, bump `version` in `package.json` on master and push a matching
+tag, such as `v0.1.1`. The `release` workflow publishes it to npm.
