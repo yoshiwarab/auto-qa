@@ -7,15 +7,10 @@ processes with `ps`.
 It needs nothing installed in the project:
 
 ```bash
-npx --allow-git=root github:yoshiwarab/auto-qa run ...
+npx auto-qa run ...
 ```
 
-npm 12 refuses git packages by default; `--allow-git=root` allows only
-auto-qa itself.
-
-The first run takes about 30 seconds. npm clones and builds auto-qa, and
-Playwright downloads Chromium. Later runs spend about 6 seconds in npx
-re-resolving the git branch before the tests start.
+The first run takes about 30 seconds while Playwright downloads Chromium.
 
 ## Commands
 
@@ -96,20 +91,10 @@ copy or symlink `skills/qa/` into your project's `.claude/skills/` or
 
 ## Installing it in a project
 
-To pin a version, add it as a git dev dependency:
+To pin a version, add it as a dev dependency:
 
 ```bash
-npm install -D github:yoshiwarab/auto-qa
-```
-
-Its `prepare` script builds `dist/` during install. pnpm 11 fetches it as a
-tarball from codeload.github.com, so no SSH key is needed, but blocks the build
-until `pnpm-workspace.yaml` allows that exact commit. The install error prints
-the entry to add; replace it whenever you update auto-qa:
-
-```yaml
-allowBuilds:
-  "auto-qa@https://codeload.github.com/yoshiwarab/auto-qa/tar.gz/<full commit sha>": true
+npm install -D auto-qa
 ```
 
 auto-qa refuses a config whose `baseURL` differs from `--base-url`. Make your
