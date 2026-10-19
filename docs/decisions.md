@@ -16,8 +16,7 @@ macOS.
 ## Two ways to use it
 
 - **Work repos**: nothing installed and nothing committed. Run it with
-  `npx --allow-git=root github:yoshiwarab/auto-qa` and throwaway `--scratch`
-  specs.
+  `npx auto-qa` and throwaway `--scratch` specs.
 - **Personal repos**: installed as a dev dependency, building a real e2e suite
   in `e2e/`.
 
