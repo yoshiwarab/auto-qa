@@ -1,9 +1,12 @@
 {
-  "name": "auto-qa",
+  "name": "@yoshiwarab/auto-qa",
   "version": "0.1.0",
   "description": "Run Playwright specs with evidence for every test, and leave no browser behind",
   "license": "MIT",
   "repository": "github:yoshiwarab/auto-qa",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "files": [
     "dist/src",
