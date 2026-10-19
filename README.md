@@ -132,3 +132,6 @@ fnm exec --using 22 pnpm check   # lint, build, typecheck, tests
 
 `pnpm check` also keeps `src/` under 450 lines. The pre-commit hook and CI run
 it.
+
+To release, bump `version` in `package.json` on master and push a matching
+tag, such as `v0.1.1`. The `release` workflow publishes it to npm.
