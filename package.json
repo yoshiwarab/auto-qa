@@ -1,6 +1,6 @@
 {
   "name": "@yoshiwarab/auto-qa",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Run Playwright specs with evidence for every test, and leave no browser behind",
   "license": "MIT",
   "repository": "github:yoshiwarab/auto-qa",
