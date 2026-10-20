@@ -88,9 +88,12 @@ are left alone.
 
 ## How agents should use it
 
-Follow [`skills/qa/SKILL.md`](skills/qa/SKILL.md). To install it as a skill,
-copy or symlink `skills/qa/` into your project's `.claude/skills/` or
-`.cursor/skills/`.
+Follow [`skills/qa/SKILL.md`](skills/qa/SKILL.md). The package ships it as an
+agent skill. With [TanStack Intent](https://tanstack.com/intent), add
+`"@yoshiwarab/auto-qa"` to the `intent.skills` list in your `package.json`, then
+load it with `pnpm exec intent load @yoshiwarab/auto-qa#qa`. Without Intent,
+copy `node_modules/@yoshiwarab/auto-qa/skills/qa` (or `skills/qa/` from this
+repo) into your project's `.claude/skills/` or `.cursor/skills/`.
 
 ## Installing it in a project
 
