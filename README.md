@@ -19,23 +19,31 @@ The first run takes about 30 seconds while Playwright downloads Chromium.
 
 ```bash
 auto-qa run [playwright test args...] --base-url <url>
-  [--scratch <spec file>]... [--out <dir>] [--allow-remote]
+  [--scratch <spec file or dir>]... [--out <dir>] [--allow-remote]
 ```
 
 Without `--scratch`, it runs `playwright test` from the project's own
 `@playwright/test`, with the project's config and test dir. With
-`--scratch <file>`, it copies those spec files into a throwaway test dir and
-runs them with auto-qa's own Playwright. The repo is never touched, and the
+`--scratch <file or dir>`, it copies those spec files into a throwaway test dir
+and runs them with auto-qa's own Playwright. The repo is never touched, and the
 project needs no Playwright. Scratch specs are black-box browser tests: they
-can import `@playwright/test`, but nothing from the project. Either way,
-auto-qa installs the matching Chromium if it is missing.
+can import `@playwright/test`, but nothing from the project. They run from the
+copy, so a spec's helpers and fixtures come along only when you pass their
+directory, and `process.cwd()` is not the project. Either way, auto-qa installs
+the matching Chromium if it is missing.
+
+Other flags go to `playwright test` unchanged. `--headed` opens a window and
+installs the full Chromium on first use; without it, auto-qa installs and runs
+only the headless shell, which renders WebGL in software.
 
 It records a trace for every test. A spec that follows the template in the
 skill adds a screenshot and accessibility snapshot. Evidence goes to
 `<out>/<id>/`, where `--out` defaults to `.auto-qa/runs` in a project and to
 `$TMPDIR/auto-qa-runs` for scratch runs. The printed `manifest.json` lists each
 test's title, file and final status, and every attempt with its status, error
-and attachments. Playwright and its browsers run in their own process groups
+and attachments. The output ends with lines that start with `auto-qa:`: one per
+failed or flaky test with the start of its error, then
+`auto-qa: manifest <path> (N passed, N failed, N flaky)`. Playwright and its browsers run in their own process groups
 under a private temp dir. They are killed when the run ends, including on
 Ctrl-C or SIGTERM.
 
@@ -43,10 +51,14 @@ Tests navigate relative to `--base-url`. A project may set `baseURL` only to
 that same origin; any other `baseURL`, or a non-Chromium project, stops the run
 before a test starts.
 
-Local means `localhost`, `*.localhost`, `127.0.0.1` or `[::1]`. A non-local
-`--base-url` requires `--allow-remote`. Such a run passes
-`--grep @prod-safe --no-deps`, so only tests tagged exactly `@prod-safe` run,
-with no setup projects. Your own `--grep` is replaced, and `--` is rejected.
+Local means served from this machine: `localhost`, `*.localhost`, `127.0.0.1`,
+`[::1]`, or a hostname whose every address belongs to this machine, such as its
+LAN or Tailscale name. Any other `--base-url` requires `--allow-remote`. Such a
+run passes `--grep @prod-safe --no-deps`, so only tests tagged exactly
+`@prod-safe` run, with no setup projects. The qa skill lets an agent tag a test
+that writes when the target is disposable (a dev or preview deployment, a
+testnet, a test account). To protect a shared environment, say so in the
+project's agent instructions; the skill then allows only read-only tests there. Your own `--grep` is replaced, and `--` is rejected.
 Your config's `webServer` and `globalSetup` still run, so keep them safe for
 production.
 
@@ -136,7 +148,7 @@ fnm exec --using 22 pnpm run setup   # install the Git hooks (`pnpm setup` is a 
 fnm exec --using 22 pnpm check   # lint, build, typecheck, tests
 ```
 
-`pnpm check` also keeps `src/` under 450 lines. The pre-commit hook and CI run
+`pnpm check` also keeps `src/` at or under 550 lines. The pre-commit hook and CI run
 it.
 
 To release, bump `version` in `package.json` on master and push a matching

@@ -1,7 +1,7 @@
 # auto-qa agent guidance
 
 Read `README.md` first. auto-qa is deliberately small. Its four commands
-(`run`, `cleanup`, `triage` and `guard`) share a budget of 450 lines of `src/`,
+(`run`, `cleanup`, `triage` and `guard`) share a budget of 550 lines of `src/`,
 enforced by `pnpm check`. Read `docs/decisions.md` before reopening a settled
 question.
 

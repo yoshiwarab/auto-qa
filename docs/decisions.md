@@ -46,11 +46,36 @@ errors, evidence, commits, app diff), and the qa skill tells the agent how to
 call each failure a regression, drift or flaky. That keeps the tool
 deterministic, free to run, and independent of any provider.
 
-## A 450-line budget
+## A 550-line budget
 
-`src/` stays at or under 450 lines, enforced by `pnpm check`. New code needs
-offsetting cuts. The budget forces using Playwright's own config, flags,
-reporters and fixtures instead of custom plumbing.
+`src/` stays at or under 550 lines, enforced by `pnpm check`. The budget steers
+toward Playwright's own config, flags, reporters and fixtures instead of custom
+plumbing; it is not a reason to drop a feature that real use asked for. It was
+450 until November 2026, when a review of 718 real runs led to the changes
+below. A future evidence-review UI may live outside `src/` under its own rules.
+
+## Local means this machine
+
+A `--base-url` is local when it is a loopback name or when every address its
+hostname resolves to belongs to this machine. Agents reached their own dev
+servers through the machine's Tailscale name in 64 of 718 runs, and each of
+those had to pass `--allow-remote` and tag its tests `@prod-safe`. Matching
+`*.ts.net` was rejected: the name says nothing about what is behind it. A
+lookup that fails counts as remote.
+
+## What the last lines of a run say
+
+86% of real runs were piped through `grep` or `tail`, which hid the manifest
+path and, twice, a refusal. So the run ends with `auto-qa:` lines that survive
+those filters: each failed or flaky test with the start of its error, then the
+manifest path with the counts. Playwright's own line reporter still prints
+above them.
+
+## Chromium only, headed on request
+
+Cleanup finds a run's browsers by Chromium's `--user-data-dir`, so other
+browsers stay refused. `--headed` installs the full Chromium; the default is
+the headless shell. GPU setup is the machine's business, not auto-qa's.
 
 ## Use it before building more
 

@@ -5,45 +5,13 @@ import { mkdirSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { option, parse, usage } from "./args.js";
 import { playwrightFor } from "./playwright.js";
 import { guard, triage } from "./triage.js";
 import { cleanup, kill, processId, runTmpDir } from "./processes.js";
 
-const usage = `usage: auto-qa run [playwright test args...] --base-url <url>
-         [--scratch <spec file>]... [--out <dir>] [--allow-remote]
-       auto-qa triage <manifest.json> [--base <git ref>]
-       auto-qa guard [--base <git ref>] [paths...]
-       auto-qa cleanup`;
-
-// Removes `--name <value>` from args and returns the value.
-const option = (args: string[], name: string) => {
-  const at = args.indexOf(name);
-  return at < 0 ? undefined : args.splice(at, 2)[1];
-};
-
-const parse = (args: string[]) => {
-  const baseUrl = option(args, "--base-url");
-  const out = option(args, "--out");
-  const scratch: string[] = [];
-  for (let spec; (spec = option(args, "--scratch"));)
-    scratch.push(resolve(spec));
-  const playwright = args.filter((arg) => arg !== "--allow-remote");
-  if (playwright.includes("--")) throw new Error("`--` is not supported");
-  if (!baseUrl) throw new Error(`--base-url is required\n${usage}`);
-  const allowRemote = args.includes("--allow-remote");
-  return { baseUrl, out, allowRemote, scratch, playwright };
-};
-
 const run = async (args: string[]) => {
-  const { baseUrl, out, allowRemote, scratch, playwright } = parse(args);
-  const local = /(^|\.)localhost$|^127\.0\.0\.1$|^\[::1\]$/.test(
-    new URL(baseUrl).hostname
-  );
-  if (!local && !allowRemote) {
-    throw new Error(
-      `${baseUrl} is not local; pass --allow-remote to run only @prod-safe tests`
-    );
-  }
+  const { baseUrl, out, local, scratch, playwright } = await parse(args);
 
   const runDir = resolve(
     out || (scratch.length ? join(tmpdir(), "auto-qa-runs") : ".auto-qa/runs"),
@@ -54,7 +22,8 @@ const run = async (args: string[]) => {
   try {
     const { cli, cwd } = playwrightFor(
       scratch,
-      join(runTmpDir(owner), "scratch")
+      join(runTmpDir(owner), "scratch"),
+      playwright.includes("--headed")
     );
     const child = spawn(
       process.execPath,
@@ -76,6 +45,7 @@ const run = async (args: string[]) => {
           ...process.env,
           TMPDIR: runTmpDir(owner),
           AUTO_QA_BASE_URL: baseUrl,
+          AUTO_QA_PROD_SAFE_ONLY: local ? "" : "1",
           AUTO_QA_RUN_DIR: runDir,
           PLAYWRIGHT_TEST_BASE_URL: baseUrl,
         },
@@ -97,6 +67,10 @@ const run = async (args: string[]) => {
 };
 
 const main = async ([command, ...args]: string[]) => {
+  if ([command, ...args].some((arg) => arg === "--help" || arg === "-h")) {
+    console.log(usage);
+    return 0;
+  }
   if (command === "run") return run(args);
   if (command === "guard") return guard(option(args, "--base"), args);
   if (command === "triage") return triage(option(args, "--base"), args[0]!);

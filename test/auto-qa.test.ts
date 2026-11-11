@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -155,6 +155,8 @@ test("writes evidence and a manifest for passing and failing tests, leaving no p
     "trace",
   ]);
   expect(evidenceOf(missing!)).toHaveProperty("error-context");
+  expect(output).toMatch(/auto-qa: failed "finds a missing button": .*Missing/);
+  expect(output).toContain("(3 passed, 1 failed, 0 flaky)");
   for (const t of [greeting!, missing!]) {
     expect(t.file).toBe("app.spec.ts");
     for (const path of Object.values(evidenceOf(t)))
@@ -215,6 +217,23 @@ test("requires --allow-remote for a remote base URL and then runs only @prod-saf
   expect(manifestOf(output).tests.map((t) => [t.title, t.status])).toEqual([
     ["uses the auto-qa base URL @prod-safe", "passed"],
   ]);
+
+  const untagged = await autoQa(
+    "run",
+    "plain.spec.ts",
+    "--base-url",
+    "https://qa.invalid",
+    "--allow-remote"
+  ).exited;
+  expect(untagged.output).toContain(
+    "auto-qa: no test ran: with --allow-remote"
+  );
+});
+
+test("prints usage for --help", async () => {
+  const { code, output } = await autoQa("run", "--help").exited;
+  expect(code).toBe(0);
+  expect(output).toContain("usage: auto-qa run");
 });
 
 test("points plain @playwright/test specs at --base-url", async () => {
@@ -261,8 +280,12 @@ test("checks only the projects selected for the run", async () => {
   expect(code, output).toBe(0);
 });
 
-test("treats [::1] and *.localhost as local", async () => {
-  for (const url of ["http://[::1]:9", "http://app.localhost:9"]) {
+test("treats [::1], *.localhost and this machine's own addresses as local", async () => {
+  const own = Object.values(networkInterfaces())
+    .flat()
+    .filter((a) => a!.family === "IPv4" && !a!.internal)
+    .map((a) => `http://${a!.address}:9`);
+  for (const url of ["http://[::1]:9", "http://app.localhost:9", ...own]) {
     const { code, output } = await autoQa(
       "run",
       "app.spec.ts",
@@ -290,6 +313,8 @@ test("records every attempt across retries", async () => {
     ["passes on retry", "passed"],
   ]);
   expect(tests[0]!.attempts.map((a) => a.status)).toEqual(["failed", "passed"]);
+  expect(output).toContain('auto-qa: flaky "passes on retry"');
+  expect(output).toContain("(0 passed, 0 failed, 1 flaky)");
 });
 
 test("writes the run under --out", async () => {
@@ -360,6 +385,36 @@ test("greets", async ({ page }) => {
   expect(contents()).toEqual(before);
   expect(alive(run.owned.keys())).toEqual([]);
   expect(ownedTmpDirs(run.child.pid!)).toEqual([]);
+
+  // A scratch directory brings the spec's helpers along.
+  mkdirSync(join(specs, "suite"));
+  writeFileSync(
+    join(specs, "suite/helper.ts"),
+    'export const text = "Hello";\n'
+  );
+  writeFileSync(
+    join(specs, "suite/helped.spec.ts"),
+    `import { expect, test } from "@playwright/test";
+import { text } from "./helper";
+test("greets with a helper", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading")).toHaveText(text);
+});
+`
+  );
+  const suite = await autoQaIn(
+    project,
+    "run",
+    "--scratch",
+    join(specs, "suite"),
+    "--base-url",
+    baseUrl
+  ).exited;
+  expect(suite.code, suite.output).toBe(0);
+  onTestFinished(() =>
+    rmSync(dirname(manifestOf(suite.output).path), { recursive: true })
+  );
+  expect(suite.output).toContain("(1 passed, 0 failed, 0 flaky)");
 });
 
 test("cleanup kills orphaned runs but spares live runs, unowned processes and evidence", async () => {

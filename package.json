@@ -20,7 +20,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "budget": "lines=$(cat src/*.ts | wc -l); [ $lines -le 450 ] || { echo \"src/ has $lines lines; the budget is 450\" >&2; exit 1; }",
+    "budget": "lines=$(cat src/*.ts | wc -l); [ $lines -le 550 ] || { echo \"src/ has $lines lines; the budget is 550\" >&2; exit 1; }",
     "build": "tsc --project tsconfig.build.json",
     "check": "pnpm budget && pnpm lint && pnpm build && pnpm typecheck && vitest run",
     "lint": "eslint .",

@@ -80,6 +80,28 @@ export default class ManifestReporter implements Reporter {
       manifest,
       `${JSON.stringify({ status: result.status, tests }, null, 2)}\n`
     );
-    console.log(`auto-qa: manifest ${manifest}`);
+    // Lines that survive a caller's `grep "passed|failed"` or `tail -3`.
+    const kind = (t: Test) =>
+      t.status === "passed" && t.attempts.length > 1
+        ? "flaky"
+        : /passed|skipped/.test(t.status)
+          ? t.status
+          : "failed";
+    const count = (k: string) => tests.filter((t) => kind(t) === k).length;
+    for (const t of tests.filter((t) => /failed|flaky/.test(kind(t)))) {
+      const error = t.attempts.find((a) => a.error)?.error ?? "";
+      const lines = error
+        .split("\n")
+        .filter((l) => l.trim())
+        .slice(0, 4);
+      console.log(`auto-qa: ${kind(t)} "${t.title}": ${lines.join(" | ")}`);
+    }
+    if (tests.length === 0 && process.env.AUTO_QA_PROD_SAFE_ONLY)
+      console.log(
+        "auto-qa: no test ran: with --allow-remote only tests with @prod-safe in their title run"
+      );
+    console.log(
+      `auto-qa: manifest ${manifest} (${count("passed")} passed, ${count("failed")} failed, ${count("flaky")} flaky)`
+    );
   }
 }
